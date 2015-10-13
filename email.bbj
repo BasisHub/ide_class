@@ -1,0 +1,2790 @@
+rem /**
+rem * Provides BBj access to email functionality 
+rem * @since 10.0 
+rem */
+rem package Email
+
+declare EmailDialog emailDialog!
+emailDialog! = new EmailDialog()
+emailDialog!.doModal()
+release
+
+
+rem ----------------------------------------------------------------------
+rem Initialize
+rem ----------------------------------------------------------------------
+
+input "host? ",mailhost$
+input "user? ",username$
+input "pass? ",password$
+input "smtp? ",smtp$; rem ' smtp or smtps
+rem ' Port is usually 25 or 587
+input "port? ",mailport; if mailport=0 then mailport=25
+input "from? ",from$
+input "subj? ",subj$
+input "  to? ",to$
+input "  cc? ",cc$
+replyTo$ = ""
+
+channel = unt
+open (channel)pgm(-1)
+file$ = fid(channel)(9)
+close (channel)
+
+rem ----------------------------------------------------------------------
+rem Send email
+rem ----------------------------------------------------------------------
+
+if username$="" and password$="" then
+   mail! = new Email(mailhost$,mailport)
+else
+   mail! = new Email(mailhost$,mailport,username$,password$,smtp$)
+endif
+
+mail!.setSubject(subj$)
+mail!.setSentDate(new Date())
+mail!.setFrom(from$)
+mail!.setTo(to$)
+if len(cc$) then mail!.setCc(cc$)
+if len(replyTo$) then mail!.setReplyTo(replyTo$)
+mail!.addData("<html> <TABLE border=""1""> <caption> Amount and type of Jello consumed </caption> <TR> <TH id=""t1"" >Name</TH> <TH id=""t2"" >Serving Size (oz)</TH> <TH id=""t3"" abbr=""Type"">Type of Jello</TH> <TH id=""t4"" >Seconds</TH> </TR> <TR> <TD headers=""t1"" >George</TD> <TD headers=""t2"" >10</TD> <TD headers=""t3"" >Red</TD> <TD headers=""t4"" >No</TD> </TR> <TR> <TD headers=""t1"" >Bob</TD> <TD headers=""t2"" >5</TD> <TD headers=""t3"" >Green</TD> <TD headers=""t4"" >Yes</TD> </TR> </TABLE></HTML>","text/html")
+mail!.addText("Mail test")
+mail!.addFile(file$)
+mail!.setHeader("X-Mailer","BBj")
+mail!.send()
+stop
+
+
+rem ----------------------------------------------------------------------
+rem Use stateemnts
+rem ----------------------------------------------------------------------
+
+use ::bbtranslator.bbj::BBTranslationBundle
+use ::bbtranslator.bbj::BBTranslations
+use ::bbtranslator.bbj::BBTranslator
+use ::bbwindowutils.bbj::BBWindowUtils
+
+use java.io.FileInputStream
+use java.io.IOException
+use java.io.File
+use java.lang.reflect.Array
+use java.lang.Class
+use java.lang.System
+use java.util.Date
+use java.util.Properties
+use java.util.HashMap
+use java.util.Set
+use java.util.Iterator
+use java.util.StringTokenizer
+use javax.activation.DataHandler
+use javax.mail.Address
+use javax.mail.Multipart
+use javax.mail.Message.RecipientType
+use javax.mail.Session
+use javax.mail.Transport
+use javax.mail.internet.InternetAddress
+use javax.mail.internet.MimeBodyPart
+use javax.mail.internet.MimeMessage
+use javax.mail.internet.MimeMultipart
+use javax.mail.util.ByteArrayDataSource
+
+rem /** Email
+rem * Allows for the sending of email messages, leaving the means by which the message 
+rem * is populated and sent up to the caller.  Attachments are supported.
+rem * @since 10.0 
+rem * @see <a href="EmailExample.bbj">Example</a>
+rem */
+class public Email
+    rem /** Session object */
+    field public Session session!
+    rem /** MimeMessage object */
+    field public MimeMessage message!
+    rem /** Multipart object */
+    field public Multipart multipart!
+    rem /** Mail server protocol, which can be smtp or smtps */
+    field public BBjString protocol$ = "smtp"
+    rem /** Mail server host */
+    field public BBjString mailhost$ = ""
+    rem /** Mail server port, default = 25 */
+    field public BBjNumber mailport = 25
+    rem /** User name to use for authentication to the mail server */
+    field public BBjString username$ = ""
+    rem /** Password to use for authentication to the mail server */
+    field public BBjString password$ = ""
+    rem /** To email addresses */
+    field private BBjVector ToEmailAddresses! = BBjAPI().makeVector()
+    rem /** Cc email addresses */
+    field private BBjVector CcEmailAddresses! = BBjAPI().makeVector()
+    rem /** Bcc email addresses */
+    field private BBjVector BccEmailAddresses! = BBjAPI().makeVector()
+    rem /** a BBjVector for inline Images */
+    field private BBjVector attachments! = BBjAPI().makeVector()
+    rem /** Multipart object */
+    field public Multipart relatedPart!
+
+    rem /** Constructor 
+    rem * Constructs a Email given a host and a port
+    rem * @param mailhost$ Mail server host 
+    rem * @param mailport$ Mail server port 
+    rem */
+    method public Email(BBjString mailhost$, BBjNumber mailport)
+        #mailhost$ = mailhost$
+        #mailport = mailport
+        properties! = new Properties()
+        properties!.put("mail.transport.protocol","smtp")
+        properties!.put("mail.smtp.host",mailhost$)
+        properties!.put("mail.smtp.port",str(mailport))
+        #session! = cast(Session,Session.getInstance(properties!,null()))
+        #session!.setDebug(0)
+        #multipart! = cast(Multipart,new MimeMultipart())
+        #message! = cast(MimeMessage,new MimeMessage(#session!))
+    methodend
+
+    rem /** Constructor 
+    rem * Constructs a Email given a host, port, user name, password, and protocol
+    rem * @param mailhost$ Mail server host 
+    rem * @param mailport$ Mail server port 
+    rem * @param username$ User name used to authenticate to mail server 
+    rem * @param password$ Password used to authenticate to mail server 
+    rem * @param smtp$ Protocol to use to mail server, which can be smtp or smtps 
+    rem */
+    method public Email(BBjString mailhost$, BBjNumber mailport, BBjString username$, BBjString password$, BBjString smtp$)
+        #protocol$ = smtp$
+        #mailhost$ = mailhost$
+        #mailport = mailport
+        #username$ = username$
+        #password$ = password$
+        properties! = new Properties()
+        properties!.put("mail.transport.protocol",smtp$)
+        properties!.put("mail."+smtp$+".host",mailhost$)
+        properties!.put("mail."+smtp$+".port",str(mailport))
+        properties!.put("mail."+smtp$+".auth","true")
+	    properties!.put("mail."+smtp$+".starttls.enable", "true")
+        #session! = cast(Session,Session.getInstance(properties!,null()))
+        #session!.setDebug(0)
+        #multipart! = cast(Multipart,new MimeMultipart())
+        #message! = cast(MimeMessage,new MimeMessage(#session!))
+    methodend
+
+    rem /** setSentDate 
+    rem * Sets the "sent date" field in an email's header before the email is sent. <p>
+    rem * It is not necessary to call this method unless some date other than the current 
+    rem * date needs to be specified as the sent date. Changing this date will not change 
+    rem * the actual time at which the email is sent. i.e., setting the sent date forward 
+    rem * a day in the future will not cause the sending of the email to be delayed a day.
+    rem * @param date! Sent date 
+    rem */
+    method public void setSentDate(Date date!)
+        #message!.setSentDate(date!)
+    methodend
+
+    rem /** setSubject 
+    rem * Sets the subject of the email message represented by the email object
+    rem * @param subject$ Subject of email 
+    rem */
+    method public void setSubject(BBjString subject$)
+        #message!.setSubject(subject$)
+    methodend
+
+    rem /** setFrom 
+    rem * Sets the "from" field in an email's header before the email is sent. The "from"
+    rem * field indicates the sending email address. <p>
+    rem * Depending on the mail service provider, it may not be necessary to set this field. 
+    rem * The value can be determined from the email account from which the mail was sent.
+    rem * @param from$ From email address 
+    rem */
+    method public void setFrom(BBjString from$)
+        #message!.setFrom(new InternetAddress(from$))
+    methodend
+
+    rem /** setReplyTo 
+    rem * Sets the "reply to" field in an email's header before the email is sent. The "reply to"
+    rem * field indicates to what email address a reply should be sent. <p>
+    rem * This method is optional. Replies will be directed to the from address if this value is not set
+    rem * @param replyTo$ Reply to email address 
+    rem */
+    method public void setReplyTo(BBjString replyTo$)
+        replyTo! = Array.newInstance(Class.forName("javax.mail.internet.InternetAddress"),1)
+        Array.set(replyTo!,0,new InternetAddress(replyTo$))
+        #message!.setReplyTo(replyTo!)
+    methodend
+
+    rem /** setTo 
+    rem * Sets the "to" field in an email's header before the email is sent. This value specifies the 
+    rem * email address to which the message will be delivered. <p>
+    rem * This method only supports one email address. Add additional recipients using the addTo() method.
+    rem * @param to$ To email address 
+    rem */
+    method public void setTo(BBjString to$)
+        #ToEmailAddresses!.clear()
+        #ToEmailAddresses!.add(to$)
+    methodend
+
+    rem /** addTo 
+    rem * Sets the first recipient or adds an additional recipient to the "to" field in an email's header 
+    rem * before the email is sent. This value specifies the email addresses to which the message will be delivered. <p>
+    rem * Each invocation of this method takes one email address. Calling this method multiple times will construct a 
+    rem * list of addresses that the message will be sent to.
+    rem * @param to$ To email address to add 
+    rem */
+    method public void addTo(BBjString to$)
+        #ToEmailAddresses!.add(to$)
+    methodend
+
+    rem /** addTo 
+    rem * Adds recipients to the "to" field in an email's header before the email is sent. 
+    rem * @param toAddresses! BBjVector of email address to add 
+    rem */
+    method public void addTo(BBjVector toAddresses!)
+         if (toAddresses! <> null())
+            #ToEmailAddresses!.addAll(toAddresses!)
+        endif
+    methodend
+
+    rem /** setCc 
+    rem * Sets the recipient for the carbon copy field in an email's header before the email is sent. 
+    rem * This value specifies the email address to receive a copy of the message. <p>
+    rem * This method takes one email address. To specify multiple recipients for the "cc" field, 
+    rem * use multiple invocations of the addCc() method. The cc field is visible to all email recipients. 
+    rem * To hide addresses that emails are being sent to, consider the setBcc() and addBcc() methods. <p>
+    rem * Adding a recipient to the carbon copy field is the same as adding it to the "to" field. 
+    rem * Entering the recipient in the "cc" field rather than the "to" field indicates that the message is 
+    rem * relevant to them, but is not a direct correspondence with them.
+    rem * @param cc$ Cc email address 
+    rem */
+    method public void setCc(BBjString cc$)
+        #CcEmailAddresses!.clear()
+        #CcEmailAddresses!.add(cc$)
+    methodend
+
+    rem /** addCc 
+    rem * Sets the first recipient or adds an additional recipient to the "cc" field in an email's header 
+    rem * before the email is sent. This value specifies the email addresses to receive a copy of the message.<p>
+    rem * Each invocation of this method takes one email address. Calling this method multiple times will construct 
+    rem * a list of addresses to receive a copy of the message. <p>
+    rem * Adding a recipient to the "cc"" field is the same as adding it to the "to" field. Adding the recipient in
+    rem * the "cc" field rather than the "to" field indicates that the message is relevant to them, but is not a direct 
+    rem * correspondence with them.
+    rem * @param cc$ Cc email address to add 
+    rem */
+    method public void addCc(BBjString cc$)
+        #CcEmailAddresses!.add(cc$)
+    methodend
+
+    rem /** addCc 
+    rem * Adds recipients to the "cc" field in an email's header before the email is sent. 
+    rem * @param ccAddresses! BBjVector of email address to add 
+    rem */
+    method public void addCc(BBjVector ccAddresses!)
+         if (ccAddresses! <> null())
+            #CcEmailAddresses!.addAll(ccAddresses!)
+        endif
+    methodend
+    
+    rem /** setBcc 
+    rem * Sets the recipient for the blind carbon copy field in an email's header before the email is sent. This value 
+    rem * specifies the email address to receive a copy of the message. Other recipients of the message will not be able 
+    rem * to see that the email was sent to the specified recipient. <p>
+    rem * This method takes one email address. To specify multiple recipients for the "bcc" field, use multiple invocations 
+    rem * of the addBcc() method. Adding a recipient to the "bcc" field (and not including that address in the "to" and "cc"
+    rem * fields) hides that recipient's address from all other recipients.
+    rem * @param bcc$ Bcc email address 
+    rem */
+    method public void setBcc(BBjString bcc$)
+        #BccEmailAddresses!.clear()
+        #BccEmailAddresses!.add(bcc$)
+    methodend
+
+    rem /** addBcc 
+    rem * Sets the first recipient or an additional recipient to the blind carbon copy field in an email's header before 
+    rem * the email is sent. This value specifies the email address to receive a copy of the message. Other recipients of 
+    rem * the message will not be able to see that the email was sent to the specified recipient. <p>
+    rem * Each invocation of this method takes one email address. Calling this method multiple times will construct a list 
+    rem * of addresses to receive a copy of the message. <p>
+    rem * Adding a recipient to the "bcc" field is not the same as adding them  to the "to" field as all other recipients, 
+    rem * including those in the "to" and "cc" fields, will not see the entries in the "bcc" field.
+    rem * @param bcc$ Bcc email address to add 
+    rem */
+    method public void addBcc(BBjString bcc$)
+        #BccEmailAddresses!.add(bcc$)
+    methodend
+
+    rem /** addBcc 
+    rem * Adds recipients to the "bcc" field in an email's header before the email is sent. 
+    rem * @param bccAddresses! BBjVector of email address to add 
+    rem */
+    method public void addBcc(BBjVector bccAddresses!)
+         if (bccAddresses! <> null())
+            #BccEmailAddresses!.addAll(bccAddresses!)
+        endif
+    methodend
+    
+    rem /** setText 
+    rem * Sets the text for the body of the email message <p>
+    rem * Alias of addText(). Can be called multiple times to add multiple text parts to the email message.
+    rem * @param text$ Text to set 
+    rem */
+    method public void setText(BBjString text$)
+        #addText(text$)
+    methodend
+
+    rem /** addText 
+    rem * Sets the text for the body of the email message represented by the email object <p>
+    rem * May be called once or multiple times to add plain text to the body of the email message. 
+    rem * Text will be added cumulatively
+    rem * @param text$ Text to add 
+    rem */
+    method public void addText(BBjString text$)
+        mimeBodyPart! = new MimeBodyPart()
+        mimeBodyPart!.setText(text$)
+        #multipart!.addBodyPart(mimeBodyPart!)
+    methodend
+
+    rem /** addData 
+    rem * Adds data to the body of the message allowing the mime type to be specified. <p>
+    rem * May be called once or multiple times to add data to the body of the email message. 
+    rem * Data will be added cumulatively
+    rem * @param data$ Data to add 
+    rem * @param mime$ Mime type of data 
+    rem */
+    method public void addData(BBjString data$, BBjString mime$)
+        mimeBodyPart! = new MimeBodyPart()
+        mimeBodyPart!.setDataHandler(new DataHandler(new ByteArrayDataSource(data$,mime$)))
+        #multipart!.addBodyPart(mimeBodyPart!)
+    methodend
+
+    rem /** addData 
+    rem * Adds data to the body of the message allowing the mime type to be specified. <p>
+    rem * May be called once or multiple times to add data to the body of the email message. 
+    rem * Data will be added cumulatively
+    rem * @param fis! FileInputStream object which contains the data to add to the email 
+    rem * @param mime$ Mime type of data 
+    rem */
+    method public void addData(FileInputStream fis!, BBjString mime$)
+        mimeBodyPart! = new MimeBodyPart()
+        mimeBodyPart!.setDataHandler(new DataHandler(new ByteArrayDataSource(fis!,mime$)))
+        #multipart!.addBodyPart(mimeBodyPart!)
+    methodend
+
+    rem /** setHtml 
+    rem * Sets the html for the email
+    rem * @param html$ HTML formatted string to add to the email 
+    rem * @param basedir$ Specifies the base directory to find HTML referenced files such as images 
+    rem */
+    method public void setHtml(BBjString html$, BBjString basedir$)
+        tmp$=html$
+        count=1
+        while pos("<img"=cvs(tmp$,8)) >0
+            imgtag$=tmp$(pos("<img"=cvs(tmp$,8)))
+            imgtag$=imgtag$(1,pos(">"=imgtag$))
+            tmp$=tmp$(pos("<img"=cvs(tmp$,8))+len(imgtag$))
+            
+            if pos("src"=cvs(imgtag$,8))=0 then
+                continue
+            else
+                img$=imgtag$(pos("src"=cvs(imgtag$,8))+4)
+                while pos(img$(1,1)="0123456789/_-ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")=0
+                   img$=img$(2)
+                wend
+                for i=1 to len(img$)
+                    if pos(img$(i,1)="0123456789/_-ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.")=0 then
+                         img$=img$(1,i-1)
+                         break
+                    fi
+                next
+                
+            fi
+            #addFile(basedir$+img$,"<img_"+str(count)+">")
+            html$=html$(1,pos(img$=html$)-1)+"cid:img_"+str(count)+html$(pos(img$=html$)+len(img$))
+            count=count+1
+        wend
+        #addData(html$,"text/html")
+    methodend
+
+    rem /** addFile 
+    rem * Adds a file attachment to the email message <p>
+    rem * May be called once or multiple times to add file attachments to the email message.
+    rem * @param filename$ Path to file to add to the email 
+    rem */
+    method public void addFile(BBjString filename$)
+        mimeBodyPart! = new MimeBodyPart()
+        mimeBodyPart!.attachFile(new File(filename$))
+        #multipart!.addBodyPart(mimeBodyPart!)
+    methodend
+
+    rem /** addFile 
+    rem * Adds a file attachment to the email message <p>
+    rem * May be called once or multiple times to add file attachments to the email message.
+    rem * @param filename$ Path to file to add to the email 
+    rem * @param contentID$ Specifies the Content=ID header for the file 
+    rem */
+    method public void addFile(BBjString filename$, BBjString contentID$)
+        mimeBodyPart! = new MimeBodyPart()
+        mimeBodyPart!.attachFile(new File(filename$))
+        mimeBodyPart!.addHeader("Content-ID",contentID$)
+        #multipart!.addBodyPart(mimeBodyPart!)
+    methodend
+
+    rem /** addImageInline 
+    rem * Adds an image to the email in such a way that it can be inlined into the HTML conteny.
+    rem * @param filename$ Path to image file to add to the email 
+    rem * @param contentID$ Specifies the Content=ID header for the file 
+    rem * @param mime$ Specifies the mime type of the image 
+    rem */
+    method public void addImageInline(BBjString filename$, BBjString contentID$, BBjString mime$)
+        if #relatedPart! = null() then
+            #relatedPart! = new MimeMultipart("related")
+        endif
+        attachment! = new MimeBodyPart()
+        fds! = new FileDataSource(filename$)
+        attachment!.setDataHandler(new DataHandler(fds!))
+        attachment!.addHeader("Content-ID","<" + contentID$ + ">")
+        attachment!.addHeader("Content-Type",mime$)
+        attachment!.setDisposition(MimeBodyPart.INLINE)
+        #attachments!.add(attachment!)
+    methodend
+
+    rem /** setHeader 
+    rem * Sets various attributes of the email header <p>
+    rem * The basic attributes of an email header are laid out in RFC 822, which can be found at http://www.faqs.org/rfcs/rfc822.html.
+    rem * @param header$ Header key
+    rem * @param value$ Header value 
+    rem */
+    method public void setHeader(BBjString header$, BBjString value$)
+        #message!.setHeader(header$,value$)
+    methodend
+
+    rem /** send 
+    rem * Sends an email message once it has been configured.<p>
+    rem * At the very least, a mail server, username, password, and the "to" field (specified by the setTo() or addTo() methods) 
+    rem * must be set before an email message can be sent. Any errors will be thrown.
+    rem */
+    method public void send()
+        seterr sendError
+        
+        rem Add recipients to the message
+        #addRecipients(#ToEmailAddresses!,RecipientType.TO)
+        #addRecipients(#CcEmailAddresses!,RecipientType.CC)
+        #addRecipients(#BccEmailAddresses!,RecipientType.BCC)
+        
+        if #relatedPart! <> null() then
+            wrap! = new MimeBodyPart()
+            wrap!.setContent(#multipart!)
+            #relatedPart!.addBodyPart(wrap!)
+            for i = 0 to #attachments!.size()-1
+                #relatedPart!.addBodyPart(cast(MimeBodyPart,#attachments!.get(i)))
+            next i
+            #message!.setContent(#relatedPart!)
+        else
+            #message!.setContent(#multipart!)
+        endif
+        if len(#username$) or len(#password$) then
+            Transport! = #session!.getTransport(#protocol$)
+            Transport!.connect(#mailhost$,#mailport,#username$,#password$)
+            Transport!.sendMessage(#message!,#message!.getAllRecipients())
+            Transport!.close()
+        else
+            Transport.send(#message!)
+        endif
+        methodret
+
+        sendError:
+            throw errmes(-1),err
+    methodend
+
+    method protected void addRecipients(BBjVector p_emailAddresses!, RecipientType p_recipientType!)
+        if (p_emailAddresses! <> null() and !p_emailAddresses!.isEmpty())
+            emailAddresses! = Array.newInstance(Class.forName("javax.mail.internet.InternetAddress"),p_emailAddresses!.size())
+            for i = 0 to p_emailAddresses!.size() -1
+                emailAddress$ = str(p_emailAddresses!.get(i))
+                Array.set(emailAddresses!,i,new InternetAddress(emailAddress$))
+            next i
+            #message!.addRecipients(p_recipientType!,emailAddresses!)
+        endif
+    methodend
+classend
+
+
+rem /** EmailDialog
+rem * Displays a dialog which allows users to send emails and maintain email settings and contacts
+rem * @since 14.0 
+rem * @see <a href="EmailDialogExample.bbj">Example</a>
+rem */
+class public EmailDialog
+    rem /** BBjAPI object */
+    field protected static BBjAPI API!=BBjAPI()
+    rem /** BBjSysGui object */
+    field protected BBjSysGui SysGui!
+    rem /** BBjThinClient object */
+    field protected static BBjThinClient ThinClient!=#API!.getThinClient()
+    rem /** BBjImageManager object */
+    field protected BBjImageManager ImageManager!
+    rem /** Translation bundle */
+    field protected static BBTranslationBundle TranslationBundle!=BBTranslationBundle.getBundle("email",System.getProperty("basis.BBjHome")+"/utils/email/prop")
+    rem /** Translations  */
+    field protected static BBTranslations Translations!=#TranslationBundle!.getTranslations(BBTranslator.createLocale(#ThinClient!.getClientLocale()))
+    rem /** Client file system  */
+    field protected BBjClientFileSystem ClientFileSystem!
+    rem /** Remote client  */
+    field protected BBjNumber RemoteClient=0
+    rem /** Skip address focus */
+    field protected BBjNumber SkipAddressFocus=0
+
+    rem /** Email dialog */
+    field protected BBjTopLevelWindow EmailWindow!
+    rem /** Email dialog title */
+    field protected BBjString Title$
+    rem /** Email dialog cancel button */
+    field protected BBjButton EmailCancelButton!
+    rem /** Email dialog send button */
+    field protected BBjButton EmailSendButton!
+    rem /** Email dialog settings button */
+    field protected BBjButton EmailSettingsButton!
+    rem /** Email dialog to menu button */
+    field protected BBjMenuButton EmailToMenuButton!
+    rem /** Email dialog to popup menu*/
+    field protected BBjPopupMenu EmailToPopupMenu!
+    rem /** Email dialog CC show menu item */
+    field protected BBjMenuItem EmailCCAddMenuItem!
+    rem /** Email dialog BCC show menu item */
+    field protected BBjMenuItem EmailBCCAddMenuItem!
+    rem /** Email dialog CC menu button */
+    field protected BBjMenuButton EmailCCMenuButton!
+    rem /** Email dialog CC popup menu*/
+    field protected BBjPopupMenu EmailCCPopupMenu!
+    rem /** Email dialog CC hide menu item */
+    field protected BBjMenuItem EmailCCRemoveMenuItem!
+    rem /** Email dialog BBC menu button */
+    field protected BBjMenuButton EmailBCCMenuButton!
+    rem /** Email dialog BCC popup menu*/
+    field protected BBjPopupMenu EmailBCCPopupMenu!
+    rem /** Email dialog BCC hide menu item */
+    field protected BBjMenuItem EmailBCCRemoveMenuItem!
+    rem /** Email dialog to edit box */
+    field protected BBjEditBox EmailToEditBox!
+    rem /** Email dialog CC edit box */
+    field protected BBjEditBox EmailCCEditBox!
+    rem /** Email dialog BCC edit box */
+    field protected BBjEditBox EmailBCCEditBox!
+    rem /** Email dialog subject static text */
+    field protected BBjStaticText EmailSubjectStaticText!
+    rem /** Email dialog subject edit box */
+    field protected BBjEditBox EmailSubjectEditBox!
+    rem /** Email dialog message static text */
+    field protected BBjStaticText EmailMessageStaticText!
+    rem /** Email dialog message cedit */
+    field protected BBjCEdit EmailMessageCEdit!
+    rem /** Email dialog Attachment menu button */
+    field protected BBjMenuButton EmailAttachmentMenuButton!
+    rem /** Email dialog Attachment popup menu*/
+    field protected BBjPopupMenu EmailAttachmentPopupMenu! 
+    rem /** Email dialog Attachment client hide menu item */
+    field protected BBjMenuItem EmailAttachmentClientMenuItem!
+    rem /** Email dialog Attachment slient hide menu item */
+    field protected BBjMenuItem EmailAttachmentServerMenuItem!
+ 
+    rem /** Email dialog Row */
+    field protected BBjNumber EmailDialogRow
+    rem /** Email dialog CC enabled flag */
+    field protected BBjNumber EmailCCEnabled
+    rem /** Email dialog BCC enabled flag */
+    field protected BBjNumber EmailBCCEnabled
+    rem /** Email dialog addresses list box */
+    field protected BBjListBox EmailAddressesListBox!
+    rem /** Email dialog remove image */
+    field protected BBjImage RemoveImage!
+    rem /** Email dialog attachment image */
+    field protected BBjImage AttachmentImage!
+
+    rem /** Attachment dialog */
+    field protected BBjTopLevelWindow AttachmentDialog!
+    rem /** Attachment file chooser */
+    field protected BBjFileChooser AttachmentFileChooser!
+    rem /** Attachment folder */
+    field protected BBjString AttachmentFolder$
+
+    rem /** Email settings dialog */
+    field protected BBjTopLevelWindow EmailSettingsDialog!
+    rem /** Email settings dialog cancel button */
+    field protected BBjButton EmailSettingsCancelButton!
+    rem /** Email settings dialog save button */
+    field protected BBjButton EmailSettingsSaveButton!
+    rem /** Email settings dialog from edit box */
+    field protected BBjEditBox EmailSettingsFromEditBox!
+    rem /** Email settings dialog server edit box */
+    field protected BBjEditBox EmailSettingsServerEditBox!
+    rem /** Email settings dialog port edit box */
+    field protected BBjEditBox EmailSettingsPortEditBox!
+    rem /** Email settings dialog SSL check box */
+    field protected BBjCheckBox EmailSettingsSSLCheckBox!
+    rem /** Email settings dialog user name edit box */
+    field protected BBjEditBox EmailSettingsUserNameEditBox!
+    rem /** Email settings dialog password edit box */
+    field protected BBjEditBox EmailSettingsPasswordEditBox!
+    rem /** Email settings dialog create contacts on send check box */
+    field protected BBjCheckBox EmailSettingsCreateContactsOnSendCheckBox!
+
+    rem /** Contacts dialog */
+    field protected BBjTopLevelWindow ContactsDialog!
+    rem /** Contacts dialog select button */
+    field protected BBjButton ContactsSelectButton!
+    rem /** Contacts dialog cancel button */
+    field protected BBjButton ContactsCancelButton!
+    rem /** Contacts dialog new button */
+    field protected BBjButton ContactsNewButton!
+    rem /**Contacts dialog remove button */
+    field protected BBjButton ContactsRemoveButton!
+    rem /** Contacts dialog edit button */
+    field protected BBjButton ContactsEditButton!
+    rem /** Contacts dialog grid */
+    field protected BBjStandardGrid ContactsGrid!
+
+    rem /** Contact change dialog */
+    field protected BBjTopLevelWindow ContactChangeDialog!
+    rem /** Contact change email edit box */
+    field protected BBjEditBox ContactChangeEmailEditBox!
+    rem /** Contact change first name edit box */
+    field protected BBjEditBox ContactChangeFirstNameEditBox!
+    rem /** Contact change last name edit box */
+    field protected BBjEditBox ContactChangeLastNameEditBox!
+    rem /** Contact change save button */
+    field protected BBjButton ContactChangeSaveButton!
+    rem /** Contact change cancel button */
+    field protected BBjButton ContactChangeCancelButton!
+    rem /** Contact change edit flag */
+    field protected BBjNumber ContactChangeEdit
+    rem /** Contact change first name */
+    field protected BBjString ContactChangeFirstName$
+    rem /** Contact change last name */
+    field protected BBjString ContactChangeLastName$
+    rem /** Contact change email */
+    field protected BBjString ContactChangeEmail$
+
+    rem /** Email addresses vector */
+    field protected BBjVector EmailAddressesVector!
+    rem /** Contacts HashMap */
+    field protected HashMap EmailContactsHashMap!
+    rem /** Email To addresses Vector */
+    field protected BBjVector EmailToVector!
+    rem /** Email CC addresses Vector */
+    field protected BBjVector EmailCCVector!
+    rem /** Email BCC addresses Vector */
+    field protected BBjVector EmailBCCVector!
+    rem /** Email subject */
+    field protected BBjString EmailSubject$
+    rem /** Email Message */
+    field protected BBjString EmailMessage$
+    rem /** Email Attachments */
+    field protected HashMap EmailAttachmentsHashMap!
+
+    rem /** Email From address */
+    field protected BBjString EmailFrom$
+    rem /** Email server hostname */
+    field protected BBjString EmailServerHost$="smtp.gmail.com"
+    rem /** Email server port */
+    field protected BBjNumber EmailServerPort=465
+    rem /** Email server SSL */
+    field protected BBjNumber EmailServerSSL=1
+    rem /** User name for email server */
+    field protected BBjString EmailServerUserName$
+    rem /** Password for email server */
+    field protected BBjString EmailServerPassword$
+    rem /** Create contacts on send */
+    field protected BBjNumber CreateContactsOnSend=1
+    rem /** Close dialog on send */
+    field protected BBjNumber CloseOnSend=1
+    
+    rem /** Constant that represents a email To address type */
+    field public static BBjNumber EMAIL_TO_TYPE=0
+    rem /** Constant that represents a email CC address type */
+    field public static BBjNumber EMAIL_CC_TYPE=1
+    rem /** Constant that represents a email BCC address type */
+    field public static BBjNumber EMAIL_BCC_TYPE=2
+
+    rem /** Translated text for Email */
+    field protected static BBjString EMAIL$=#Translations!.getTranslation("EMAIL")
+    rem /** Translated text for To */
+    field protected static BBjString TO$=#Translations!.getTranslation("TO")
+    rem /** Translated text for CC */
+    field protected static BBjString CC$=#Translations!.getTranslation("CC")
+    rem /** Translated text for BCC */
+    field protected static BBjString BCC$=#Translations!.getTranslation("BCC")
+    rem /** Translated text for Subject */
+    field protected static BBjString SUBJECT$=#Translations!.getTranslation("SUBJECT")
+    rem /** Translated text for Message */
+    field protected static BBjString MESSAGE$=#Translations!.getTranslation("MESSAGE")
+    rem /** Translated text for attach server files */
+    field protected static BBjString ATTACH_SERVER_FILES$=#Translations!.getTranslation("ATTACH_SERVER_FILES")
+    rem /** Translated text for attach client files */
+    field protected static BBjString ATTACH_CLIENT_FILES$=#Translations!.getTranslation("ATTACH_CLIENT_FILES")
+    rem /** Translated text for Settings */
+    field protected static BBjString SETTINGS$=#Translations!.getTranslation("SETTINGS")
+    rem /** Translated text for Cancel */
+    field protected static BBjString CANCEL$=#Translations!.getTranslation("CANCEL")
+    rem /** Translated text for Send */
+    field protected static BBjString SEND$=#Translations!.getTranslation("SEND")
+    rem /** Translated text for Save */
+    field protected static BBjString SAVE$=#Translations!.getTranslation("SAVE")
+    rem /** Translated text for Contacts */
+    field protected static BBjString CONTACTS$=#Translations!.getTranslation("CONTACTS")
+    rem /** Translated text for Select */
+    field protected static BBjString SELECT$=#Translations!.getTranslation("SELECT")
+    rem /** Translated text for New */
+    field protected static BBjString NEW$=#Translations!.getTranslation("NEW")
+    rem /** Translated text for Edit */
+    field protected static BBjString EDIT$=#Translations!.getTranslation("EDIT")
+    rem /** Translated text for Remove */
+    field protected static BBjString REMOVE$=#Translations!.getTranslation("REMOVE")
+    rem /** Translated text for First Name */
+    field protected static BBjString FIRST_NAME$=#Translations!.getTranslation("FIRST_NAME")
+    rem /** Translated text for Last Name */
+    field protected static BBjString LAST_NAME$=#Translations!.getTranslation("LAST_NAME")
+    rem /** Translated text for New Contact */
+    field protected static BBjString NEW_CONTACT$=#Translations!.getTranslation("NEW_CONTACT")
+    rem /** Translated text for Edit Contact */
+    field protected static BBjString EDIT_CONTACT$=#Translations!.getTranslation("EDIT_CONTACT")
+    rem /** Translated text for From Email */
+    field protected static BBjString FROM_EMAIL$=#Translations!.getTranslation("FROM_EMAIL")
+    rem /** Translated text for Server */
+    field protected static BBjString SERVER$=#Translations!.getTranslation("SERVER")
+    rem /** Translated text for Port */
+    field protected static BBjString PORT$=#Translations!.getTranslation("PORT")
+    rem /** Translated text for SSL */
+    field protected static BBjString SSL$=#Translations!.getTranslation("SSL")
+    rem /** Translated text for User Name */
+    field protected static BBjString USER_NAME$=#Translations!.getTranslation("USER_NAME")
+    rem /** Translated text for Password */
+    field protected static BBjString PASSWORD$=#Translations!.getTranslation("PASSWORD")
+    rem /** Translated text for create contacts on save */
+    field protected static BBjString CREATE_CONTACTS_ON_SEND$=#Translations!.getTranslation("CREATE_CONTACTS_ON_SEND")
+    rem /** Translated text for remove contact confirmation message */
+    field protected static BBjString REMOVE_CONTACT_CONFRIM_MSG$=#Translations!.getTranslation("REMOVE_CONTACT_CONFRIM_MSG")
+    rem /** Translated text for email sent message */
+    field protected static BBjString EMAIL_SENT_MSG$=#Translations!.getTranslation("EMAIL_SENT_MSG")
+    rem /** Translated text for email failed message */
+    field protected static BBjString EMAIL_FAILED_MSG$=#Translations!.getTranslation("EMAIL_FAILED_MSG")
+    rem /** Translated text for invalid email message */
+    field protected static BBjString INVALID_EMAIL_MSG$=#Translations!.getTranslation("INVALID_EMAIL_MSG")
+    rem /** Translated text for email attachment already message */
+    field protected static BBjString EMAIL_ATTACHMENT_ALREADY_ADDED_MSG$=#Translations!.getTranslation("EMAIL_ATTACHMENT_ALREADY_ADDED_MSG")
+    rem /** Translated text for email address already added message */
+    field protected static BBjString EMAIL_ADDRESS_ALREADY_ADDED_MSG$=#Translations!.getTranslation("EMAIL_ADDRESS_ALREADY_ADDED_MSG")
+    rem /** Translated text for contact already exists message */
+    field protected static BBjString CONTACT_ALREADY_EXISTS_MSG$=#Translations!.getTranslation("CONTACT_ALREADY_EXISTS_MSG")
+    rem /** Translated text for overwrite message */
+    field protected static BBjString OVERWRITE_MSG$=#Translations!.getTranslation("OVERWRITE_MSG")
+    
+
+    rem /** Default Constructor
+    rem * Creates a empty EmailDialog object     
+    rem */
+    method public EmailDialog()
+        #SysGui! = #API!.openSysGui("X0")
+        #ImageManager!=#SysGui!.getImageManager()
+        #ClientFileSystem! = #ThinClient!.getClientFileSystem()
+        
+        #EmailAttachmentsHashMap! = new HashMap()
+        rem Remote client check
+        if (#ThinClient!.getClientName() <> "127.0.0.1" and info(3,4) <> info(3,7))
+            #RemoteClient=1
+        endif
+
+        rem Load contacts and settings from the user properties
+        #EmailContactsHashMap! = #getEmailContacts()
+        #EmailFrom$ = #getEmailFrom()
+        #EmailServerHost$ = #getEmailServerHost()
+        #EmailServerPort = #getEmailServerPort()
+        #EmailServerSSL = #getEmailServerSSL()
+        #EmailServerUserName$ = #getEmailServerUserName()
+        #EmailServerPassword$ = #getEmailServerPassword()
+        #CreateContactsOnSend = #getCreateContactsOnSend()
+
+        #EmailToVector! = #API!.makeVector()
+        #EmailCCVector! = #API!.makeVector()
+        #EmailBCCVector! = #API!.makeVector()
+        #RemoveImage! = #ImageManager!.loadImageFromFile(System.getProperty("basis.BBjHome") + "/utils/email/remove.png")
+        #AttachmentImage! = #ImageManager!.loadImageFromFile(System.getProperty("basis.BBjHome") + "/utils/email/paperclip.png")
+
+        rem Create the email window
+        #EmailWindow! =  #SysGui!.addWindow(#SysGui!.getAvailableContext(),200,200,520,230,"",$00090012$)
+        #setTitle(#EMAIL$)
+        #EmailWindow!.addStyle("basisUtility")
+        BBWindowUtils.centerWindow(#EmailWindow!,err=*next)
+        #EmailToMenuButton! = #EmailWindow!.addMenuButton(#EmailWindow!.getAvailableControlID(),5,10,50,25,#TO$ + ":")
+        #EmailToPopupMenu! = #EmailToMenuButton!.addDropdownMenu()
+        #EmailCCAddMenuItem! = #EmailToPopupMenu!.addMenuItem(-201,#CC$)
+        #EmailBCCAddMenuItem! = #EmailToPopupMenu!.addMenuItem(-202,#BCC$)
+        #EmailToEditBox! = #EmailWindow!.addEditBox(#EmailWindow!.getAvailableControlID(),60,10,450,25,"")
+        #EmailCCMenuButton! = #EmailWindow!.addMenuButton(#EmailWindow!.getAvailableControlID(),5,40,50,25,#CC$ + ":",$0010$)
+        #EmailCCEditBox! = #EmailWindow!.addEditBox(#EmailWindow!.getAvailableControlID(),60,40,450,25,"",$0010$)
+        #EmailCCPopupMenu! = #EmailCCMenuButton!.addDropdownMenu()
+        #EmailCCRemoveMenuItem! = #EmailCCPopupMenu!.addMenuItem(-301,#REMOVE$)
+        #EmailBCCMenuButton! = #EmailWindow!.addMenuButton(#EmailWindow!.getAvailableControlID(),5,70,50,25,#BCC$ + ":",$0010$)
+        #EmailBCCPopupMenu! = #EmailBCCMenuButton!.addDropdownMenu()
+        #EmailBCCRemoveMenuItem! = #EmailBCCPopupMenu!.addMenuItem(-401,#REMOVE$)
+        #EmailBCCEditBox! = #EmailWindow!.addEditBox(#EmailWindow!.getAvailableControlID(),60,70,450,25,"",$0010$)
+        #EmailSubjectStaticText! = #EmailWindow!.addStaticText(#EmailWindow!.getAvailableControlID(),5,43,50,25,#SUBJECT$ + ":",$8000$)
+        #EmailSubjectEditBox! = #EmailWindow!.addEditBox(#EmailWindow!.getAvailableControlID(),60,40,450,25,"")
+        #EmailMessageStaticText! = #EmailWindow!.addStaticText(#EmailWindow!.getAvailableControlID(),5,70,50,25,#MESSAGE$ + ":",$8000$)
+        #EmailMessageCEdit! = #EmailWindow!.addCEdit(#EmailWindow!.getAvailableControlID(),60,70,450,75,"")
+        if (info(6,0) <> "GWT")
+            #EmailMessageCEdit!.setLeftMargin(5)
+            #EmailMessageCEdit!.setRightMargin(5)
+        endif
+        #EmailMessageCEdit!.setLineWrap(1)
+        #EmailMessageCEdit!.setDrawBorder(1)
+        #EmailMessageCEdit!.setIgnoreTabs(1)
+        #EmailAttachmentMenuButton! = #EmailWindow!.addMenuButton(#EmailWindow!.getAvailableControlID(),5,150,50,25,"")
+        #EmailAttachmentMenuButton!.setImage(#AttachmentImage!)
+        if (#RemoteClient)
+            #EmailAttachmentPopupMenu! = #EmailAttachmentMenuButton!.addDropdownMenu()
+            #EmailAttachmentServerMenuItem! = #EmailAttachmentPopupMenu!.addMenuItem(-501,#ATTACH_SERVER_FILES$)
+            #EmailAttachmentClientMenuItem! = #EmailAttachmentPopupMenu!.addMenuItem(-502,#ATTACH_CLIENT_FILES$)
+        endif    
+        #EmailAddressesListBox! = #EmailWindow!.addListBox(#EmailWindow!.getAvailableControlID(),60,35,450,125,"",$0010$)
+        #EmailAddressesVector! = #API!.makeVector()
+        #EmailSettingsButton! = #EmailWindow!.addButton(#EmailWindow!.getAvailableControlID(),5,200,100,25,#SETTINGS$ + "...")
+        #EmailCancelButton! = #EmailWindow!.addButton(#EmailWindow!.getAvailableControlID(),310,200,100,25,#CANCEL$)
+        #EmailSendButton! = #EmailWindow!.addButton(#EmailWindow!.getAvailableControlID(),415,200,100,25,#SEND$)
+        #EmailWindow!.setCallback(BBjTopLevelWindow.ON_CLOSE,"OnEmailDialogClose")
+        #EmailCancelButton!.setCallback(BBjButton.ON_BUTTON_PUSH,"OnEmailDialogClose")
+        #EmailSettingsButton!.setCallback(BBjButton.ON_BUTTON_PUSH,#this!,"OnEmailDialogSettings")
+        #EmailSendButton!.setCallback(BBjButton.ON_BUTTON_PUSH,#this!,"OnEmailDialogSend")
+        #EmailToMenuButton!.setCallback(BBjMenuButton.ON_BUTTON_PUSH,#this!,"OnEmailDialogToContacts")
+        #EmailCCMenuButton!.setCallback(BBjMenuButton.ON_BUTTON_PUSH,#this!,"OnEmailDialogCCContacts")
+        #EmailBCCMenuButton!.setCallback(BBjMenuButton.ON_BUTTON_PUSH,#this!,"OnEmailDialogBCCContacts")
+        #EmailCCAddMenuItem!.setCallback(BBjMenuItem.ON_POPUP_ITEM_SELECT,#this!,"OnEmailDialogCCAdd")
+        #EmailBCCAddMenuItem!.setCallback(BBjMenuItem.ON_POPUP_ITEM_SELECT,#this!,"OnEmailDialogBCCAdd")
+        #EmailCCRemoveMenuItem!.setCallback(BBjMenuItem.ON_POPUP_ITEM_SELECT,#this!,"OnEmailDialogCCRemove")
+        #EmailBCCRemoveMenuItem!.setCallback(BBjMenuItem.ON_POPUP_ITEM_SELECT,#this!,"OnEmailDialogBCCRemove")
+        #EmailAttachmentMenuButton!.setCallback(BBjMenuButton.ON_BUTTON_PUSH,#this!,"OnEmailDialogAttachmentServer")
+        if (#RemoteClient)
+            #EmailAttachmentServerMenuItem!.setCallback(BBjMenuItem.ON_POPUP_ITEM_SELECT,#this!,"OnEmailDialogAttachmentServer")
+            #EmailAttachmentClientMenuItem!.setCallback(BBjMenuItem.ON_POPUP_ITEM_SELECT,#this!,"OnEmailDialogAttachmentClient")
+        endif
+        #EmailToEditBox!.setCallback(BBjEditBox.ON_EDIT_MODIFY,#this!,"OnEmailAddressEdit")
+        #EmailToEditBox!.setCallback(BBjEditBox.ON_EDIT_KEYPRESS,#this!,"OnEmailToAddressKeypress")
+        #EmailToEditBox!.setCallback(BBjEditBox.ON_LOST_FOCUS,#this!,"OnEmailAddressLostFocus")
+        #EmailCCEditBox!.setCallback(BBjEditBox.ON_EDIT_MODIFY,#this!,"OnEmailAddressEdit")
+        #EmailCCEditBox!.setCallback(BBjEditBox.ON_EDIT_KEYPRESS,#this!,"OnEmailCCAddressKeypress")
+        #EmailCCEditBox!.setCallback(BBjEditBox.ON_LOST_FOCUS,#this!,"OnEmailAddressLostFocus")
+        #EmailBCCEditBox!.setCallback(BBjEditBox.ON_EDIT_MODIFY,#this!,"OnEmailAddressEdit")
+        #EmailBCCEditBox!.setCallback(BBjEditBox.ON_EDIT_KEYPRESS,#this!,"OnEmailBCCAddressKeypress")
+        #EmailBCCEditBox!.setCallback(BBjEditBox.ON_LOST_FOCUS,#this!,"OnEmailAddressLostFocus")
+        #EmailAddressesListBox!.setCallback(BBjListBox.ON_LIST_DOUBLE_CLICK,#this!,"OnEmailAddressSelect")
+    methodend
+
+    rem /** setTitle
+    rem * Sets the title of the dialog
+    rem * @param p_title$ Sets the title of the dialog     
+    rem */
+    method public void setTitle(BBjString p_title$)
+        #Title$ = p_title$
+        #EmailWindow!.setTitle(#Title$)
+    methodend
+
+    rem /** setLocation
+    rem * Sets the X,Y location of the dialog
+    rem * @param p_x Specifies the X location     
+    rem * @param p_y Specifies the y location     
+    rem */
+    method public void setLocation(BBjNumber p_x, BBjNumber p_y)
+        #EmailWindow!.setLocation(p_x,p_y)
+    methodend
+
+    rem /** setEmailSubject
+    rem * Sets the email subject
+    rem * @param p_emailSubject$ Email subject     
+    rem */
+    method public void setEmailSubject(BBjString p_emailSubject$)
+        #EmailSubject$ = p_emailSubject$
+    methodend
+    
+    rem /** setEmailMessage
+    rem * Sets the email message
+    rem * @param p_emailMessage$ Email message     
+    rem */
+    method public void setEmailMessage(BBjString p_emailMessage$)
+        #EmailMessage$ = p_emailMessage$
+    methodend
+    
+    rem /** addEmailAttachment
+    rem * Adds a file as a email attachment
+    rem * @param p_emailAttachment$ Location of file to add as an email attachment
+    rem * The attachment will only be added if the associated file can be opened
+    rem * @return Returns TRUE (1) if the email attachment was added or FALSE (0) otherwise     
+    rem */
+    method public BBjNumber addEmailAttachment(BBjString p_emailAttachment$)
+        declare BBjChildWindow attachmentChildWindow!
+        declare BBjStaticText attachmentStaticText!
+        declare BBjToolButton attachmentRemoveButton!
+        
+        rc = 0 
+        chan = unt
+        seterr addEmailAttachmentReturn
+        open (chan) p_emailAttachment$
+        attachmentPath$ = fid(chan)(9)
+        close (chan)
+        if !(#EmailAttachmentsHashMap!.containsKey(attachmentPath$))
+            emailWindowHeight = #EmailWindow!.getHeight()
+            attachmentChildWindow! = #EmailWindow!.addChildWindow(#EmailWindow!.getAvailableControlID(),60,emailWindowHeight-80,450,25,"",$10$,#SysGui!.getAvailableContext())
+            attachmentStaticText! = attachmentChildwindow!.addStaticText(attachmentChildWindow!.getAvailableControlID(),5,5,420,25,"")
+            attachmentStaticText!.setLineWrap(0)
+            attachmentStaticText!.setText(attachmentPath$)
+            attachmentStaticText!.setShortCue(attachmentPath$)
+            attachmentRemoveButton! = attachmentChildwindow!.addToolButton(attachmentChildWindow!.getAvailableControlID(),427,2,21,21,"") 
+            attachmentRemoveButton!.setNoEdge(1)
+            attachmentRemoveButton!.setOpaque(0)
+            attachmentRemoveButton!.setImage(#RemoveImage!)
+            attachmentRemoveButton!.setUserData(attachmentPath$)
+            attachmentRemoveButton!.setCallback(BBjToolButton.ON_TOOL_BUTTON_PUSH,#this!,"OnAttachmentRemove")
+            #EmailAttachmentsHashMap!.put(attachmentPath$,attachmentChildWindow!)
+            #layoutEmailDialogControls()
+            rc = 1
+        endif     
+    addEmailAttachmentReturn:
+        methodret rc
+    methodend
+
+    rem /** removeEmailAttachment
+    rem * Removes a email attachment
+    rem * @param p_emailAttachment$ Path of file to remove from being an email attachment
+    rem * @return Returns TRUE (1) if the email attachment was removed or FALSE (0) otherwise     
+    rem */
+    method public BBjNumber removeEmailAttachment(BBjString p_emailAttachment$)
+        declare BBjString fileName!
+        declare BBjChildWindow eamilAttachmentChildWindow!
+        
+        rc = 0
+        chan = unt
+        seterr removeEmailAttachmentReturn
+        open (chan) p_emailAttachment$
+        attachmentPath$ = fid(chan)(9)
+        close (chan)
+        if (#EmailAttachmentsHashMap!.containsKey(attachmentPath$))
+            eamilAttachmentChildWindow! = cast(BBjChildWindow,#EmailAttachmentsHashMap!.get(attachmentPath$))
+            eamilAttachmentChildWindow!.destroy()
+            #EmailAttachmentsHashMap!.remove(attachmentPath$)
+            rc = 1
+            #layoutEmailDialogControls()
+        endif
+    removeEmailAttachmentReturn:
+        methodret rc
+    methodend
+    
+    rem /** OnAttachmentRemove
+    rem * Callback for when a remove attachment tool button is pushed
+    rem * @param p_event! BBjToolButtonPushEvent object     
+    rem */
+    method public void OnAttachmentRemove(BBjToolButtonPushEvent p_event!)
+        declare BBjToolButton removeAttachmentToolButton!
+        
+        removeAttachmentToolButton! = cast(BBjToolButton,p_event!.getControl())
+        attachment$ = str(removeAttachmentToolButton!.getUserData())
+        #removeEmailAttachment(attachment$)
+    methodend
+
+    rem /** setEmailFrom
+    rem * Sets the email from address
+    rem * @param p_emailFrom$ From email address
+    rem */
+    method public void setEmailFrom(BBjString p_emailFrom$)
+        #EmailFrom$ = p_emailFrom$
+        #ThinClient!.setUserProperty("Email.From",#EmailFrom$)
+    methodend
+ 
+    rem /** setEmailServerHost
+    rem * Sets the email server host
+    rem * @param p_emailServerHost$ Email server host name 
+    rem */
+    method public void setEmailServerHost(BBjString p_emailServerHost$)
+        #EmailServerHost$ = p_emailServerHost$
+        #ThinClient!.setUserProperty("EmailServer.Host",#EmailServerHost$)
+    methodend
+    
+    rem /** setEmailServerPort
+    rem * Sets the email server port
+    rem * @param p_emailServerPort Email server port
+    rem */
+    method public void setEmailServerPort(BBjNumber p_emailServerPort)
+        #EmailServerPort = p_emailServerPort
+        #ThinClient!.setUserProperty("EmailServer.Port",str(#EmailServerPort))
+    methodend
+
+    rem /** setEmailServerSSL
+    rem * Sets the email server ssl protocol on or off
+    rem * @param p_emailServerSSL Specify 1 for ssl ortherwise specify 0
+    rem */
+    method public void setEmailServerSSL(BBjNumber p_emailServerSSL)
+        #EmailServerSSL = p_emailServerSSL
+        #ThinClient!.setUserProperty("EmailServer.SSL",str(#EmailServerSSL))
+    methodend
+    
+    rem /** setEmailServerUserName
+    rem * Sets user name that will be used to authentication to the email server 
+    rem * @param p_emailServerUserName$ User name that will be used to authentication to the email server 
+    rem */
+    method public void setEmailServerUserName(BBjString p_emailServerUserName$)
+        #EmailServerUserName$ = p_emailServerUserName$
+        #ThinClient!.setUserProperty("EmailServer.UserName",#EmailServerUserName$)
+    methodend
+
+    rem /** setEmailServerPassword
+    rem * Sets password that will be used to authentication to the email server 
+    rem * @param p_emailServerPassword$ Password that will be used to authentication to the email server 
+    rem */
+    method public void setEmailServerPassword(BBjString p_emailServerPassword$)
+        #EmailServerPassword$ = p_emailServerPassword$
+        #ThinClient!.setUserProperty("EmailServer.Password",#EmailServerPassword$)
+    methodend
+
+    rem /** setCreateContactsOnSend
+    rem * Sets whether contacts should be created for new email addresses on a send 
+    rem * @param p_createContactsOnSend Specify TRUE (1) to create contacts for new email addresses on a send, otherwise specify FALSE (0) 
+    rem */
+    method public void setCreateContactsOnSend(BBjNumber p_createContactsOnSend)
+        #CreateContactsOnSend = p_createContactsOnSend
+        #ThinClient!.setUserProperty("Email.CreateContactsOnSend",str(#CreateContactsOnSend))
+    methodend
+
+    rem /** setCloseOnSend
+    rem * Sets whether dialog should be closed on a send 
+    rem * @param p_closeOnSend Specify TRUE (1) to close the dialog on a send, otherwise specify FALSE (0) 
+    rem */
+    method public void setCloseOnSend(BBjNumber p_closeOnSend)
+        #CloseOnSend = p_closeOnSend
+    methodend
+    
+    rem /** getTitle
+    rem * Returns the dialog title
+    rem * @return Dialog title
+    rem */
+    method public BBjString getTitle()
+        methodret #Title$
+    methodend
+
+    rem /** getX
+    rem * Returns the X location of the email dialog
+    rem * @return X location of the email dialog
+    rem */
+    method public BBjNumber getX()
+        methodret #EmailWindow!.getX()
+    methodend
+
+    rem /** getY
+    rem * Returns the Y location of the email dialog
+    rem * @return Y location of the email dialog
+    rem */
+    method public BBjNumber getY()
+        methodret #EmailWindow!.getY()
+    methodend
+
+    rem /** getWidth
+    rem * Returns the width of the dialog
+    rem * @return The width of the dialog     
+    rem */
+    method public BBjNumber getWidth()
+        methodret #EmailWindow!.getWidth()
+    methodend
+
+    rem /** getHeight
+    rem * Returns the height of the dialog
+    rem * @return The height of the dialog     
+    rem */
+    method public BBjNumber getHeight()
+        methodret #EmailWindow!.getHeight()
+    methodend
+
+    rem /** getEmailSubject
+    rem * Returns the email subject
+    rem * @return Email subject
+    rem */
+    method public BBjString getEmailSubject()
+        methodret #EmailSubject$
+    methodend
+
+    rem /** getEmailMessage
+    rem * Returns the email message
+    rem * @return Email message
+    rem */
+    method public BBjString getEmailMessage()
+        methodret #EmailMessage$
+    methodend
+
+    rem /** getEmailAttachments
+    rem * Returns the file names of the email attachments
+    rem * @return BBjVector containing the attachment file names
+    rem */
+    method public BBjVector getEmailAttachments()
+        declare BBjVector emailAttachmentsVector!
+        
+        emailAttachmentsVector! = #API!.makeVector()
+        emailAttachmentsVector!.addAll(#EmailAttachmentsHashMap!.keySet())
+        methodret emailAttachmentsVector!
+    methodend
+ 
+    rem /** getEmailFrom
+    rem * Returns the email from address
+    rem * @return Email from address
+    rem */
+    method public BBjString getEmailFrom()
+        #EmailFrom$ = #ThinClient!.getUserProperty("Email.From",err=*next)
+        methodret #EmailFrom$
+    methodend
+
+    rem /** getEmailServerHost
+    rem * Returns the email server host name
+    rem * @return Email server host name
+    rem */
+    method public BBjString getEmailServerHost()
+        #EmailServerHost$ = #ThinClient!.getUserProperty("EmailServer.Host",err=*next)
+        methodret #EmailServerHost$
+    methodend
+
+    rem /** getEmailServerPort
+    rem * Returns the email server port
+    rem * @return Email server port
+    rem */
+    method public BBjNumber getEmailServerPort()
+        #EmailServerPort = num(#ThinClient!.getUserProperty("EmailServer.Port",err=*next))
+        methodret #EmailServerPort
+    methodend
+
+    rem /** getEmailServerSSL
+    rem * Returns the email server SSL
+    rem * @return Returns 1 if the email server is using SSL, otherwise 0 is returned
+    rem */
+    method public BBjNumber getEmailServerSSL()
+        #EmailServerSSL = num(#ThinClient!.getUserProperty("EmailServer.SSL",err=*next))
+        methodret #EmailServerSSL
+    methodend
+
+    rem /** getEmailServerUserName
+    rem * Returns the email server user name
+    rem * @return Email server user name
+    rem */
+    method public BBjString getEmailServerUserName()
+        #EmailServerUserName$ =  #ThinClient!.getUserProperty("EmailServer.UserName",err=*next)
+        methodret #EmailServerUserName$
+    methodend
+
+    rem /** getEmailServerPassword
+    rem * Returns the email server password
+    rem * @return Email server password
+    rem */
+    method public BBjString getEmailServerPassword()
+        #EmailServerPassword$ =  #ThinClient!.getUserProperty("EmailServer.Password",err=*next)
+        methodret #EmailServerPassword$
+    methodend
+
+    rem /** getCreateContactsOnSend
+    rem * Returns whether contacts should be created for new email addresses on a send
+    rem * @return Returns TRUE (1) when contacts should be create created for new email addresses on a send, otherwise FALSE (0) is returned
+    rem */
+    method public BBjNumber getCreateContactsOnSend()
+        #CreateContactsOnSend =  num(#ThinClient!.getUserProperty("Email.CreateContactsOnSend",err=*next))
+        methodret #CreateContactsOnSend
+    methodend
+
+    rem /** getCloseOnSend
+    rem * Returns whether the dialog should be closed on a send
+    rem * @return Returns TRUE (1) when the dialog should be close on a send, otherwise FALSE (0) is returned
+    rem */
+    method public BBjNumber getCloseOnSend()
+        methodret #CloseOnSend
+    methodend
+
+    rem /** getEmailContacts
+    rem * Returns the email contacts
+    rem * @return HashMap containing EmailContacts
+    rem */
+    method public HashMap getEmailContacts()
+        declare StringTokenizer stEmailContacts!
+        declare StringTokenizer stEmailContactFields!
+        
+        #EmailContactsHashMap! = new HashMap()
+        emailContacts$ = #ThinClient!.getUserProperty("Email.ContactList",err=*next)
+        
+        rem Contacts are separated by ^
+        stEmailContacts! = new StringTokenizer(emailContacts$,"^")
+        while (stEmailContacts!.hasMoreTokens())
+            emailContact$ = str(stEmailContacts!.nextToken())
+            rem Contact fields are separated by #
+            stEmailContactFields! = new StringTokenizer(emailContact$,"#")
+            emailAddress$ = ""
+            firstName$ = ""
+            lastName$ = ""
+            if (stEmailContactFields!.hasMoreTokens())
+                emailAddress$ = str(stEmailContactFields!.nextToken())
+            endif
+            if (stEmailContactFields!.hasMoreTokens())
+                firstName$ = str(stEmailContactFields!.nextToken())
+            endif
+            if (stEmailContactFields!.hasMoreTokens())
+                lastName$ = str(stEmailContactFields!.nextToken())
+            endif
+            emailContact! = new EmailContact(firstName$,lastName$,emailAddress$)
+            #addEmailContact(emailContact!)
+        wend
+        methodret #EmailContactsHashMap!
+    methodend    
+
+    rem /** doModal
+    rem * Runs the email dialog 
+    rem */
+    method public void doModal()
+        #layoutEmailDialogControls()
+        #setEmailSendButtonState()
+        #EmailSubjectEditBox!.setText(#EmailSubject$)
+        #EmailMessageCEdit!.setText(#EmailMessage$)
+        #EmailWindow!.setVisible(1)
+        #EmailToEditBox!.focus()
+        if (#EmailServerHost$ = "" or #EmailServerPort < 1 or #EmailServerUserName$ = "" or #EmailServerPassword$ = "")
+            #OnEmailDialogSettings(null())
+        endif
+        BBjAPI().setCustomEventCallback("CloseEmailDialog","OnEmailDialogClose")
+
+        rem Process the events
+        process_events,err=*same
+
+    OnEmailDialogClose:
+        #EmailWindow!.setVisible(0)
+    methodend
+
+    rem /** OnEmailDialogClose
+    rem * Callback for when the email dialog is to be closed
+    rem * @param p_event! BBjSysGuiEvent object     
+    rem */
+    method public void OnEmailDialogClose(BBjSysGuiEvent p_event!)
+        #EmailWindow!.setVisible(0)
+    methodend
+
+    rem /** OnEmailDialogToContacts
+    rem * Callback to bring up the contacts dialog for the To addresees
+    rem * @param p_event! BBjButtonPushEvent object     
+    rem */
+    method public void OnEmailDialogToContacts(BBjButtonPushEvent p_event!)
+        #emailDialogContacts(#EMAIL_TO_TYPE)
+    methodend
+
+    rem /** OnEmailDialogCCContacts
+    rem * Callback to bring up the contacts dialog for the CC addresees
+    rem * @param p_event! BBjButtonPushEvent object     
+    rem */
+    method public void OnEmailDialogCCContacts(BBjButtonPushEvent p_event!)
+        #emailDialogContacts(#EMAIL_CC_TYPE)
+    methodend
+    
+    rem /** OnEmailDialogBCContacts
+    rem * Callback to bring up the contacts dialog for the BCC addresees
+    rem * @param p_event! BBjButtonPushEvent object     
+    rem */
+    method public void OnEmailDialogBCCContacts(BBjButtonPushEvent p_event!)
+        #emailDialogContacts(#EMAIL_BCC_TYPE)
+    methodend
+
+    rem /** OnEmailDialogContacts
+    rem * Callback to bring up the contacts dialog
+    rem * @param p_emailType Specifies the email type    
+    rem */
+    method protected void emailDialogContacts(BBjNumber p_emailType)
+        if (#ContactsDialog! = null())
+            #ContactsDialog! =  #SysGui!.addWindow(#SysGui!.getAvailableContext(), #EmailWindow!.getX() + 20,#EmailWindow!.getY() + 40,540,340,#CONTACTS$,$00090012$)
+            #ContactsGrid! = #ContactsDialog!.addGrid(#ContactsDialog!.getAvailableControlID(),10,10,415,300)
+            #ContactsGrid!.setMultipleSelection(1)
+            #ContactsGrid!.setSelectionMode(BBjGrid.GRID_SELECT_ROW)
+            #ContactsGrid!.setShouldHighlightSelectedRow(1)
+            #ContactsGrid!.setNumColumns(3)
+            #ContactsGrid!.setColumnWidth(0,80)
+            #ContactsGrid!.setColumnWidth(1,80)
+            #ContactsGrid!.setColumnWidth(2,235)
+            #ContactsGrid!.setHasColumnHeader(1)
+            #ContactsGrid!.setColumnHeaderCellText(0,#FIRST_NAME$)
+            #ContactsGrid!.setColumnHeaderCellText(1,#LAST_NAME$)
+            #ContactsGrid!.setColumnHeaderCellText(2,#EMAIL$)
+            #ContactsGrid!.setAllColumnsUserSortable(1)
+            #ContactsGrid!.sortByColumn(0, BBjStandardGrid.SORT_ASCENDING)
+            #ContactsGrid!.setUserResizable(1)
+            #ContactsGrid!.setDefaultAlignment(BBjGrid.GRID_ALIGN_LEFT)
+            #ContactsGrid!.setRowHeight(20)
+            #ContactsGrid!.setVerticalScrollable(1)
+            #ContactsGrid!.setVerticalScrollBarAlways(1)
+            #ContactsSelectButton! = #ContactsDialog!.addButton(1,5,310,100,25,#SELECT$)
+            #ContactsCancelButton! = #ContactsDialog!.addButton(2,110,310,100,25,#CANCEL$)
+            #ContactsNewButton! = #ContactsDialog!.addButton(3,435,10,100,25,#NEW$ + "...")
+            #ContactsEditButton! = #ContactsDialog!.addButton(4,435,40,100,25,#EDIT$ + "...")
+            #ContactsRemoveButton! = #ContactsDialog!.addButton(5,435,70,100,25,#REMOVE$)
+            #ContactsDialog!.setCallback(BBjTopLevelWindow.ON_CLOSE,#this!,"OnContactsDialogClose")
+            #ContactsCancelButton!.setCallback(BBjButton.ON_BUTTON_PUSH,#this!,"OnContactsDialogClose")
+            #ContactsSelectButton!.setCallback(BBjButton.ON_BUTTON_PUSH,#this!,"OnContactsDialogSelect")
+            #ContactsGrid!.setCallback(BBjGrid.ON_GRID_DOUBLE_CLICK,#this!,"OnContactsGridDoubleClick")
+            #ContactsNewButton!.setCallback(BBjButton.ON_BUTTON_PUSH,#this!,"OnContactDialogNew")
+            #ContactsEditButton!.setCallback(BBjButton.ON_BUTTON_PUSH,#this!,"OnContactDialogEdit")
+            #ContactsRemoveButton!.setCallback(BBjButton.ON_BUTTON_PUSH,#this!,"OnContactsDialogRemove")
+        endif
+        #ContactsDialog!.setUserData(p_emailType)
+        rem Load the contacts
+        #loadEmailContacts()
+        #setContactsDialogButtonStates()
+        #ContactsDialog!.setVisible(1)    
+    methodend
+ 
+    rem /** OnContactsDialogClose
+    rem * Callback to bring close the Contacts dialog
+    rem * @param p_event! BBjSysGuiEvent object     
+    rem */
+    method public void OnContactsDialogClose(BBjSysGuiEvent p_event!)
+        #ContactsDialog!.setVisible(0)
+    methodend
+
+    rem /** OnContactsDialogSelect
+    rem * Callback for when the contacts select button is preseed
+    rem * @param p_event! BBjButtonPushEvent object     
+    rem */
+    method public void OnContactsDialogSelect(BBjButtonPushEvent p_event!)
+        declare BBjVector selectedAddresses!
+  
+        emailType = num(#ContactsDialog!.getUserData())
+        selectedAddresses! = #ContactsGrid!.getSelectedRows()
+        numSelectedAddresses = selectedAddresses!.size()
+        if (numSelectedAddresses > 0)
+            for i = 0 to numSelectedAddresses - 1
+                selectedIndex = selectedAddresses!.get(i)
+                firstName$ = #ContactsGrid!.getCellText(selectedIndex,0)
+                lastName$ = #ContactsGrid!.getCellText(selectedIndex,1)
+                emailAddress$ = #ContactsGrid!.getCellText(selectedIndex,2)
+                #addEmailAddress(firstName$,lastName$,emailAddress$,emailType)
+            next i
+        endif
+        #ContactsDialog!.setVisible(0)
+    methodend
+
+    rem /** OnContactsGridDoubleClick
+    rem * Callback when the user double clicks on the contacts grid 
+    rem * @param p_event! BBjGridDoubleClickEvent object     
+    rem */
+    method public void OnContactsGridDoubleClick(BBjGridDoubleClickEvent p_event!)
+        if (p_event!.getRow() > -1)
+            #OnContactsDialogSelect(null())
+        endif
+    methodend
+
+    rem /** OnContactDialogEdit
+    rem * Callback when the contact edit button is pressed 
+    rem * @param p_event! BBjButtonPushEvent object     
+    rem */
+    method public void OnContactDialogEdit(BBjButtonPushEvent p_event!)
+        #contactsDialogChange(0)
+    methodend
+
+    rem /** OnContactDialogEdit
+    rem * Callback when the contact new button is pressed 
+    rem * @param p_event! BBjButtonPushEvent object     
+    rem */
+    method public void OnContactDialogNew(BBjButtonPushEvent p_event!)
+        #contactsDialogChange(1)
+    methodend
+    
+    rem /** contactsDialogChange
+    rem * Brings up the contacts dialog 
+    rem * @param p_newContact Specify 1 for a new contact, otherwise 0     
+    rem */
+    method public void contactsDialogChange(BBjNumber p_newContact)
+        if (#ContactChangeDialog! = null())
+            #ContactChangeDialog! =  #SysGui!.addWindow(#SysGui!.getAvailableContext(), #ContactsDialog!.getX() + 20,#ContactsDialog!.getY() + 40,400,130,"",$00090012$)
+            #ContactChangeCancelButton! = #ContactChangeDialog!.addButton(2,190,100,100,25,#CANCEL$)
+            #ContactChangeSaveButton! = #ContactChangeDialog!.addButton(1,295,100,100,25,#SAVE$)
+            staticText! = #ContactChangeDialog!.addStaticText(#ContactChangeDialog!.getAvailableControlID(),5,8,70,25,#FIRST_NAME$ + ":",$8000$)
+            #ContactChangeFirstNameEditBox! = #ContactChangeDialog!.addEditBox(#ContactChangeDialog!.getAvailableControlID(),80,5,210,25,"")
+            staticText! = #ContactChangeDialog!.addStaticText(#ContactChangeDialog!.getAvailableControlID(),5,38,70,25,#LAST_NAME$ + ":",$8000$)
+            #ContactChangeLastNameEditBox! = #ContactChangeDialog!.addEditBox(#ContactChangeDialog!.getAvailableControlID(),80,35,210,25,"")
+            staticText! = #ContactChangeDialog!.addStaticText(#ContactChangeDialog!.getAvailableControlID(),5,68,70,25,#EMAIL$ + ":",$8000$)
+            #ContactChangeEmailEditBox! = #ContactChangeDialog!.addEditBox(#ContactChangeDialog!.getAvailableControlID(),80,65,310,25,"")
+            #ContactChangeDialog!.setCallback(BBjWindow.ON_CLOSE,#this!,"OnContactChangeDialogClose")
+            #ContactChangeCancelButton!.setCallback(BBjButton.ON_BUTTON_PUSH,#this!,"OnContactChangeDialogClose")
+            #ContactChangeSaveButton!.setCallback(BBjButton.ON_BUTTON_PUSH,#this!,"OnContactChangeSave")
+            #ContactChangeFirstNameEditBox!.setCallback(BBjEditBox.ON_EDIT_MODIFY,#this!,"OnContactChangeFirstNameEdit")
+            #ContactChangeLastNameEditBox!.setCallback(BBjEditBox.ON_EDIT_MODIFY,#this!,"OnContactChangeLastNameEdit")
+            #ContactChangeEmailEditBox!.setCallback(BBjEditBox.ON_EDIT_MODIFY,#this!,"OnContactChangeEmailEdit")
+        endif
+        if (p_newContact)
+            #ContactChangeEdit = 0
+            #ContactChangeDialog!.setTitle(#NEW_CONTACT$)
+            #ContactChangeFirstName$ = ""
+            #ContactChangeLastName$ = ""
+            #ContactChangeEmail$ = "" 
+        else
+            #ContactChangeEdit = 1
+            #ContactChangeDialog!.setTitle(#EDIT_CONTACT$)
+            selectedContactRow = #ContactsGrid!.getSelectedRow()
+            #ContactChangeFirstName$ = #ContactsGrid!.getCellText(selectedContactRow,0)
+            #ContactChangeLastName$ = #ContactsGrid!.getCellText(selectedContactRow,1)
+            #ContactChangeEmail$ = #ContactsGrid!.getCellText(selectedContactRow,2)
+        endif
+        #ContactChangeFirstNameEditBox!.setText(#ContactChangeFirstName$)
+        #ContactChangeLastNameEditBox!.setText(#ContactChangeLastName$)
+        #ContactChangeEmailEditBox!.setText(#ContactChangeEmail$)
+        #ContactChangeSaveButton!.setEnabled(0)
+        #ContactChangeDialog!.setVisible(1)
+        #ContactChangeFirstNameEditBox!.focus()
+    methodend
+
+    rem /** OnContactChangeFirstNameEdit
+    rem * Callback for when the contact change first name is edited
+    rem * @param p_event! BBjEditModifyEvent object     
+    rem */
+    method public void OnContactChangeFirstNameEdit(BBjEditModifyEvent p_event!)
+        #ContactChangeFirstName$ = p_event!.getText()
+        #setContactChangeSaveState()
+    methodend
+
+    rem /** OnContactChangeLastNameEdit
+    rem * Callback for when the contact change last name is edited
+    rem * @param p_event! BBjEditModifyEvent object     
+    rem */
+    method public void OnContactChangeLastNameEdit(BBjEditModifyEvent p_event!)
+        #ContactChangeLastName$ = p_event!.getText()
+        #setContactChangeSaveState()
+    methodend
+
+    rem /** OnContactChangeEmailEdit
+    rem * Callback for when the contact change email is edited
+    rem * @param p_event! BBjEditModifyEvent object     
+    rem */
+    method public void OnContactChangeEmailEdit(BBjEditModifyEvent p_event!)
+        #ContactChangeEmail$ = p_event!.getText()
+        #setContactChangeSaveState()
+    methodend
+  
+    rem /** setContactChangeSaveState
+    rem * Sets the save button state on the contact change dialog
+    rem */
+    method protected void setContactChangeSaveState()
+        enableSave = 0 
+        if (#ContactChangeEmail$ <> "")
+            emailAddress! = #ContactChangeEmail$
+            atIndex = emailAddress!.indexOf("@")
+            dotIndex = emailAddress!.indexOf(".")
+            if (atIndex <> -1 and atIndex <> emailAddress!.length()-1 and dotIndex <> -1 and dotIndex <> emailAddress!.length()-1)
+                enableSave = 1
+            endif
+        endif
+        #ContactChangeSaveButton!.setEnabled(enableSave)
+    methodend
+  
+    rem /** OnContactChangeDialogClose
+    rem * Callback for when the contact change dialog is closed
+    rem * @param p_event! BBjSysGuiEvent object     
+    rem */
+    method public void OnContactChangeDialogClose(BBjSysGuiEvent p_event!)
+        #ContactChangeDialog!.setVisible(0)
+    methodend
+    
+    rem /** OnContactChangeSave
+    rem * Callback for when the contact change save button is pressed
+    rem * @param p_event! BBjButtonPushEvent object     
+    rem */
+    method public void OnContactChangeSave(BBjButtonPushEvent p_event!)
+        declare EmailContact emailContact!
+        
+        if (#ContactChangeEdit)
+            #OnContactsDialogRemove(null())
+        endif    
+        firstName$ = #ContactChangeFirstNameEditBox!.getText()
+        lastName$ = #ContactChangeLastNameEditBox!.getText()
+        emailAddress$ = #ContactChangeEmailEditBox!.getText()
+        emailContact! = new EmailContact(firstName$,lastName$,emailAddress$)
+        if !(#addEmailContact(emailContact!))
+           rc=MsgBox(#CONTACT_ALREADY_EXISTS_MSG$ + ": " + emailAddress$ + ". " + #OVERWRITE_MSG$,4+32+256,#Title$)
+           if (rc = 6)
+                #removeEmailContact(emailContact!)
+                #addEmailContact(emailContact!)
+           endif
+        endif   
+        #loadEmailContacts(emailAddress$)
+        #setContactsDialogButtonStates()
+        #ContactChangeDialog!.setVisible(0)
+    methodend
+ 
+    rem /** OnContactsDialogRemove
+    rem * Callback for when the Contacts remove button is pressed
+    rem * @param p_event! BBjButtonPushEvent object     
+    rem */
+    method public void OnContactsDialogRemove(BBjButtonPushEvent p_event!)
+        declare BBjVector selectedContacts!
+        declare EmailContact emailContact!
+        
+        if (p_event! <> null())
+            rc=MsgBox(#REMOVE_CONTACT_CONFRIM_MSG$,4+32+256,#Title$)
+            if (rc = 7)
+                methodret
+            endif    
+        endif
+        selectedContacts! = #ContactsGrid!.getSelectedRows()
+        contactsIndex = selectedContacts!.size()  - 1
+        while (contactsIndex > -1)
+            contactIndex = selectedContacts!.get(contactsIndex)
+            firstName$ = #ContactsGrid!.getCellText(contactIndex,0)
+            lastName$ = #ContactsGrid!.getCellText(contactIndex,1)
+            emailAddress$ = #ContactsGrid!.getCellText(contactIndex,2)
+            emailContact! = new EmailContact(firstName$,lastName$,emailAddress$)
+            #removeEmailContact(emailContact!)
+            #ContactsGrid!.deleteRow(contactIndex)
+            #ContactsGrid!.setSelectedRow(contactIndex-1,err=*next)
+            contactsIndex = contactsIndex - 1
+        wend
+        #setContactsDialogButtonStates()
+    methodend
+
+    rem /** setContactsDialogButtonStates
+    rem * Sets the states of the buttons on the contacts dialog
+    rem */
+    method protected void setContactsDialogButtonStates()
+        numContacts = #EmailContactsHashMap!.size()
+        #ContactsSelectButton!.setEnabled(numContacts)
+        #ContactsEditButton!.setEnabled(numContacts)
+        #ContactsRemoveButton!.setEnabled(numContacts)
+    methodend
+ 
+    rem /** addEmailContacts
+    rem * Adds email contacts to the contact list  
+    rem * @param p_emailContacts! Vector that contains the EmailContact objects to add     
+    rem * @return Returns TRUE (1) if all the email contacts were added or FALSE (0) otherwise     
+    rem */
+    method public BBjNumber addEmailContacts(BBjVector p_emailContacts!)
+        declare EmailContact emailContact!
+        
+        rc = 0
+        numEmailContacts = p_emailContacts!.size()
+        if (numEmailContacts > 0)
+            rc = 1
+            for i = 0 to numEmailContacts -1
+                emailContact! = cast(EmailContact,p_emailContacts!.get(i))       
+                addRC = #addEmailContact(emailContact!)
+                if (addRC = 0)
+                    rc = 0
+                endif
+            next i
+        endif
+        methodret rc
+    methodend
+
+    rem /** OnEmailDialogAttachmentClient
+    rem * Callback to add a client file as an attachment to the email
+    rem * @param p_event! BBjSysGuiEvent object     
+    rem */
+    method public void OnEmailDialogAttachmentClient(BBjSysGuiEvent p_event!)
+        #showAttachmentDialog(1)
+    methodend
+   
+    rem /** OnEmailDialogAttachmentServer
+    rem * Callback to add a server file as an attachment to the email
+    rem * @param p_event! BBjSysGuiEvent object     
+    rem */
+    method public void OnEmailDialogAttachmentServer(BBjSysGuiEvent p_event!)
+        #showAttachmentDialog(0)
+    methodend
+    
+    rem /** showAttachmentDialog
+    rem * Shows a file open dialog to select files to add as an attachment to the email
+    rem * @param p_onClient Specify 1 to select client files, otherwise specify 0 to select server files     
+    rem */
+    method protected void showAttachmentDialog(BBjNumber p_selectClientFiles)
+        rem Create the attachment dialog
+        width=600
+        height=350
+        if (p_selectClientFiles)
+            flags$ = $04$
+            title$ = #ATTACH_CLIENT_FILES$
+        else
+            flags$ = ""
+            title$ = #ATTACH_SERVER_FILES$
+        endif
+        #AttachmentDialog! = #SysGui!.addWindow(#SysGui!.getAvailableContext(),0,0,width,height,title$,$00080012$)
+        #AttachmentFileChooser! = #AttachmentDialog!.addFileChooser(#AttachmentDialog!.getAvailableControlID(),0,0,width,height,"",flags$)
+        #AttachmentFileChooser!.setUserData(p_selectClientFiles)
+        #AttachmentFileChooser!.setOpaque(0)
+        #AttachmentFileChooser!.setOpaque(0)
+        #AttachmentFileChooser!.setFileSelectionMode(BBjFileChooser.FILES_ONLY)
+        #AttachmentFileChooser!.setMultiSelectionEnabled(1)
+        #AttachmentFileChooser!.setCurrentDirectory(#AttachmentFolder$)
+        #AttachmentDialog!.setCallback(BBjTopLevelWindow.ON_CLOSE,#this!,"OnAttachmentDialogClose")
+        #AttachmentFileChooser!.setCallback(BBjFileChooser.ON_FILECHOOSER_CANCEL,#this!,"OnAttachmentDialogClose")
+        #AttachmentFileChooser!.setCallback(BBjFileChooser.ON_FILECHOOSER_APPROVE,#this!,"OnAttachmentDialogApprove")
+
+        rem Center and show the attachment dialog
+        BBWindowUtils.centerWindow(#AttachmentDialog!,1)
+        #AttachmentDialog!.setVisible(1)
+    methodend
+    
+    rem /** OnAttachmentDialogClose
+    rem * Callback when the attachment dialog should be closed
+    rem * @param p_event! BBjSysGuiEvent object
+    rem */
+    method public void OnAttachmentDialogClose(BBjSysGuiEvent p_event!)
+        #AttachmentDialog!.destroy()
+    methodend
+
+    rem /** OnAttachmentDialogApprove
+    rem * Callback when a file is choosen in the attachment dialog  
+    rem * @param p_event! BBjFileChooserApproveEvent object
+    rem */
+    method public void OnAttachmentDialogApprove(BBjFileChooserApproveEvent p_event!)
+        declare BBjVector attachmentFiles!
+       
+        clientFiles = num(#AttachmentFileChooser!.getUserData()) 
+        #AttachmentDialog!.setCursor(BBjWindow.CURSOR_WAIT)
+        #AttachmentFolder$ = #AttachmentFileChooser!.getCurrentDirectory()
+        attachmentFiles! = #AttachmentFileChooser!.getSelectedFiles()
+        numAttachmentFiles = attachmentFiles!.size()
+        if (numAttachmentFiles > 0)
+            for i = 0 to numAttachmentFiles - 1
+                attachmentFile$ = str(attachmentFiles!.get(i))
+                if (clientFiles and #RemoteClient)
+                    rem Upload the client file to the server
+                    attachmentFile$ = #uploadRemoteClientFile(attachmentFile$)
+                endif
+                if !(#addEmailAttachment(attachmentFile$))
+                    x=MsgBox(#EMAIL_ATTACHMENT_ALREADY_ADDED_MSG$ +  ": " + attachmentFile$,16,#Title$)
+                    #EmailAttachmentMenuButton!.focus()
+                endif 
+            next i
+        endif
+        #AttachmentDialog!.setCursor(BBjWindow.CURSOR_NORMAL)
+        #AttachmentDialog!.destroy()
+    methodend
+
+    rem Uploads a remote client file to the server and returns the server name 
+    method protected BBjString uploadRemoteClientFile(BBjString p_clientFileName$)
+        declare BBjClientFile clientFile!
+        declare File          tmpServerFile!
+
+        clientFile! = #ClientFileSystem!.getClientFile(p_clientFileName$)
+        if (clientFile! <> null() and clientFile!.exists())
+            tmpServerFileName$ = clientFile!.copyFromClient()
+            tmpServerFile! = new File(tmpServerFileName$)
+            tmpServerDir$ = tmpServerFile!.getParent()
+            serverFileName$ =  tmpServerDir$ + File.separator + clientFile!.getName()
+            erase serverFileName$,err=*next
+            rename tmpServerFileName$,serverFileName$
+        endif
+        methodret serverFileName$
+    methodend
+
+
+    rem /** addEmailContact
+    rem * Adds a email contact to the contact list
+    rem * @param p_emailContact! EmailContact object to add to the contact list     
+    rem * @return Returns TRUE (1) if the email contact was added or FALSE (0) otherwise     
+    rem */
+    method public BBjNumber addEmailContact(EmailContact p_emailContact!)
+        rc = 0
+        if !(#EmailContactsHashMap!.containsKey(p_emailContact!.getEmailAddress()))
+            #EmailContactsHashMap!.put(p_emailContact!.getEmailAddress(),p_emailContact!)
+            #saveEmailContacts()
+            rc = 1
+        endif
+        methodret rc    
+    methodend
+ 
+    rem /** removeAllEmailContacts
+    rem * Removes all email contacts from the contact list
+    rem */
+    method public void removeAllEmailContacts()
+        #EmailContactsHashMap!.clear()
+        #saveEmailContacts()
+    methodend
+ 
+    rem /** removeEmailContacts
+    rem * Removes email contacts from the contact list  
+    rem * @param p_emailContacts! Vector that contains the EmailContact objects to remove from the contact list     
+    rem * @return Returns TRUE (1) if all the email contacts were removed or FALSE (0) otherwise     
+    rem */
+    method public BBjNumber removeEmailContacts(BBjVector p_emailContacts!)
+        declare EmailContact emailContact!
+        
+        rc = 0
+        numEmailContacts = p_emailContacts!.size()
+        if (numEmailContacts > 0)
+            rc = 1
+            for i = 0 to numEmailContacts -1
+                emailContact! = cast(EmailContact,p_emailContacts!.get(i))       
+                removeRC = #removeEmailContact(emailContact!)
+                if (removeRC = 0)
+                    rc = 0
+                endif
+            next i
+        endif
+        methodret rc
+    methodend
+
+    rem /** removeEmailContact
+    rem * Removes a email contact from the contact list
+    rem * @param p_emailContact! EmailContact object to remove from the contact list     
+    rem * @return Returns TRUE (1) if the email contact was removed or FALSE (0) otherwise     
+    rem */
+    method public BBjNumber removeEmailContact(EmailContact p_emailContact!)
+        rc = 0
+        if (#EmailContactsHashMap!.containsKey(p_emailContact!.getEmailAddress()))
+            #EmailContactsHashMap!.remove(p_emailContact!.getEmailAddress())
+            #saveEmailContacts()
+            rc = 1
+        endif
+        methodret rc
+    methodend
+
+    rem /** saveEmailContacts
+    rem * Saves the email contacts to the user propeties
+    rem */
+    method public void saveEmailContacts()
+        declare EmailContact emailContact!
+  
+        emailContacts$=""
+        contactKeys! = #EmailContactsHashMap!.keySet()
+        iter! = contactKeys!.iterator()
+        while (iter!.hasNext())
+            emailAddress$ = str(iter!.next())
+            emailContact! = cast(EmailContact,#EmailContactsHashMap!.get(emailAddress$))
+            emailContacts$ = emailContacts$ + emailContact!.getEmailAddress() + "#" + emailContact!.getFirstName() + "#" + emailContact!.getLastName() + "#" + "^"           
+        wend
+        #ThinClient!.setUserProperty("Email.ContactList",emailContacts$)
+    methodend
+ 
+    rem /** loadEmailContacts
+    rem * Loads contacts from the HashMap into the contacts grid
+    rem */
+    method public void loadEmailContacts()
+        #loadEmailContacts("")
+    methodend
+
+    rem /** loadEmailContacts
+    rem * Loads email contacts from the HashMap into the contacts grid
+    rem * @param p_emailAddress$ Email address to be selected after the grid is loaded     
+    rem */
+    method public void loadEmailContacts(BBjString p_emailAddress$)
+        declare Set contactKeys!
+        declare EmailContact emailContact!
+    
+        contactKeys! = #EmailContactsHashMap!.keySet()
+        #ContactsGrid!.setNumRows(contactKeys!.size())
+        iter! = contactKeys!.iterator()
+        while (iter!.hasNext())
+            emailAddress$ = str(iter!.next())
+            emailContact! = cast(EmailContact,#EmailContactsHashMap!.get(emailAddress$))
+            #ContactsGrid!.setCellText(i,0,emailContact!.getFirstName())
+            #ContactsGrid!.setCellText(i,1,emailContact!.getLastName())
+            #ContactsGrid!.setCellText(i,2,emailContact!.getEmailAddress())
+            if (p_emailAddress$ = emailAddress$)
+                #ContactsGrid!.setSelectedRow(i)
+            endif
+            i = i + 1
+        wend
+        #ContactsGrid!.resort()
+    methodend    
+     
+    rem /** OnEmailDialogSend
+    rem * Callback for when the email dialog send button is pressed
+    rem * @param p_event! BBjButtonPushEvent object     
+    rem */
+    method public void OnEmailDialogSend(BBjButtonPushEvent p_event!)
+        declare Email email!
+        declare BBjVector emailContacts!
+        declare BBjChildWindow emailToChildWindow!
+        declare BBjChildWindow emailCCChildWindow!
+        declare BBjChildWindow emailBCCChildWindow!
+        declare Set emailAttachmentsSet! 
+        declare Iterator emailAttachmentsIter! 
+        
+        #EmailWindow!.setCursor(BBjWindow.CURSOR_WAIT)
+
+        seterr EmailSendError
+        
+        if (#CreateContactsOnSend)
+            emailContacts! = #API!.makeVector()
+        endif
+        
+        #EmailSubject$ = #EmailSubjectEditBox!.getText()
+        #EmailMessage$ = #EmailMessageCEdit!.getText()
+        if (#EmailServerSSL)
+            emailProtocol$ = "smtps"
+        else
+            emailProtocol$ = "smtp"
+        endif 
+        rem rem Validate requiried fields
+        rem Create the email
+        email! = new Email(#EmailServerHost$, #EmailServerPort, #EmailServerUserName$, #EmailServerPassword$, emailProtocol$)
+        rem Set From address
+        if (#EmailFrom$ <> "")
+            email!.setFrom(#EmailFrom$)
+        endif
+        rem Add To addresses
+        if (#EmailToVector!.size() > 0)
+            for i = 0 to #EmailToVector!.size() - 1
+                emailToChildWindow! = cast(BBjChildWindow,#EmailToVector!.get(i))
+                emailAddress$ = str(emailToChildWindow!.getText())
+                email!.addTo(emailAddress$)
+                if (#CreateContactsOnSend)
+                    emailContacts!.addItem(new EmailContact(emailAddress$))
+                endif    
+            next i
+        endif
+           
+        rem Add CC addresses
+        if (#EmailCCVector!.size() > 0)
+            for i = 0 to #EmailCCVector!.size() - 1
+                emailCCChildWindow! = cast(BBjChildWindow,#EmailCCVector!.get(i))
+                emailAddress$ = str(emailCCChildWindow!.getText())
+                email!.addCc(emailAddress$)
+                if (#CreateContactsOnSend)
+                    emailContacts!.addItem(new EmailContact(emailAddress$))
+                endif    
+            next i
+        endif    
+        
+        rem Add BCC addresses
+        if (#EmailBCCVector!.size() > 0)
+            for i = 0 to #EmailBCCVector!.size() - 1
+                emailBCCChildWindow! = cast(BBjChildWindow,#EmailBCCVector!.get(i))
+                emailAddress$ = str(emailBCCChildWindow!.getText())
+                email!.addBcc(emailAddress$)
+                if (#CreateContactsOnSend)
+                    emailContacts!.addItem(new EmailContact(emailAddress$))
+                endif    
+            next i
+        endif
+                
+        rem Set the subject
+        email!.setSubject(#EmailSubject$)
+
+        rem Set the message
+        email!.setText(#EmailMessage$)
+
+        rem Add attachments
+        numAttachments = #EmailAttachmentsHashMap!.size()
+        if (numAttachments > 0)
+            emailAttachmentsSet! = #EmailAttachmentsHashMap!.keySet()
+            emailAttachmentsIter! = emailAttachmentsSet!.iterator()
+            while (emailAttachmentsIter!.hasNext())
+                emailAttachment$ = str(emailAttachmentsIter!.next())
+                email!.addFile(emailAttachment$)
+            wend
+        endif
+        
+        rem Send the email
+        email!.send()
+
+        #EmailWindow!.setCursor(BBjWindow.CURSOR_NORMAL)
+        x=MsgBox(#EMAIL_SENT_MSG$,64,#Title$)
+        
+        rem Create contacts for new email addresses
+        if (#CreateContactsOnSend)
+            #addEmailContacts(emailContacts!)
+        endif
+        
+        if (#getCloseOnSend())
+            BBjAPI().postCustomEvent("CloseEmailDialog","")
+        endif    
+
+        methodret
+        
+    EmailSendError:
+        #EmailWindow!.setCursor(BBjWindow.CURSOR_NORMAL)
+        x=MsgBox(#EMAIL_FAILED_MSG$ + ": " + errmes(-1),16,#Title$)
+    methodend
+
+    rem /** OnEmailToAddressKeypress
+    rem * Callback for when a key is pressed in the email to edit box
+    rem * @param p_event! BBjEditKeypressEvent object     
+    rem */
+    method public void OnEmailToAddressKeypress(BBjEditKeypressEvent p_event!)
+        emailType = #EMAIL_TO_TYPE
+        #handleEmailAddressKeypress(p_event!,emailType)
+    methodend
+
+    rem /** OnEmailCCAddressKeypress
+    rem * Callback for when a key is pressed in the email cc edit box
+    rem * @param p_event! BBjEditKeypressEvent object     
+    rem */
+    method public void OnEmailCCAddressKeypress(BBjEditKeypressEvent p_event!)
+        emailType = #EMAIL_CC_TYPE
+        #handleEmailAddressKeypress(p_event!,emailType)
+    methodend
+
+    rem /** OnEmailBCCAddressKeypress
+    rem * Callback for when a key is pressed in the email bcc edit box
+    rem * @param p_event! BBjEditKeypressEvent object     
+    rem */
+    method public void OnEmailBCCAddressKeypress(BBjEditKeypressEvent p_event!)
+        emailType = #EMAIL_BCC_TYPE
+        #handleEmailAddressKeypress(p_event!,emailType)
+    methodend
+ 
+    rem /** handleEmailAddressKeypress
+    rem * Handles a key press event in a email edit box
+    rem * @param p_event! BBjEditKeypressEvent object     
+    rem * @param p_emailType Specifies the type of email the edit box is associated with     
+    rem */
+    method protected void handleEmailAddressKeypress(BBjEditKeypressEvent p_event!, BBjNumber p_emailType)
+        #EmailAddressesListBox!.setUserData(p_event!.getControl()) 
+        selectIndex = -1
+        keyCode = p_event!.getKeyCode()
+        switch (keyCode)
+            rem Tab
+            case 9
+            rem Return
+            case 13
+                if (#EmailAddressesListBox!.isVisible() or p_event!.getControl().getText() <> "")
+                    #OnEmailAddressSelect(null())
+                endif    
+                break
+            rem Up Arrow
+            case 301
+                if (#EmailAddressesListBox!.isVisible())
+                    selectIndex = #EmailAddressesListBox!.getSelectedIndex()
+                    if (selectIndex > 0)
+                        selectIndex = selectIndex - 1
+                    endif
+                endif    
+                break
+            rem Down Arrow
+            case 302
+                if (#EmailAddressesListBox!.isVisible())
+                    selectIndex = #EmailAddressesListBox!.getSelectedIndex()
+                    if (selectIndex < #EmailAddressesListBox!.getItemCount())
+                        selectIndex = selectIndex + 1
+                    endif
+                else
+                    #OnEmailAddressEdit(null())
+                endif        
+                break
+        swend   
+        if (selectIndex <> -1)
+            #EmailAddressesListBox!.selectIndex(selectIndex)
+            #EmailAddressesListBox!.setVisible(1)
+        endif 
+    methodend
+ 
+ 
+    rem /** OnEmailAddressEdit
+    rem * Callback for when a email address text is changed
+    rem * @param p_event! BBjEditModifyEvent object     
+    rem */
+    method public void OnEmailAddressEdit(BBjEditModifyEvent p_event!)
+        declare BBjEditBox emailEditBox!
+        declare BBjString address!
+        declare BBjString emailAddress!
+        declare BBjString firstName!
+        declare BBjString contactKey!
+        declare Set contactKeys!
+        declare Iterator iter!
+        declare EmailContact emailContact!
+        declare BBjVector addressesVector!
+        declare BBjVector emailVector!
+        
+        addressesVector! = #API!.makeVector()
+        if (p_event! <> null())
+            emailEditBox! = cast(BBjEditBox,p_event!.getControl())
+        else
+            emailEditBox! = cast(BBjEditBox,#EmailAddressesListBox!.getUserData())
+        endif
+        
+        switch (emailEditBox!.getID())
+            case #EmailToEditBox!.getID()
+                emailVector! = #EmailToVector!
+                break
+            case #EmailCCEditBox!.getID()
+                emailVector! = #EmailCCVector!
+                break
+            case #EmailBCCEditBox!.getID()
+                emailVector! = #EmailBCCVector!
+                break
+        swend
+        address! = emailEditBox!.getText()
+        address! = address!.toLowerCase()
+        address! = address!.trim()
+        #EmailAddressesListBox!.destroy()
+        #EmailAddressesVector!.clear()
+        
+        rem Search contacts for address/name 
+        contactKeys! = #EmailContactsHashMap!.keySet()
+        iter! = contactKeys!.iterator()
+        while (iter!.hasNext())
+            contactKey! = str(iter!.next())
+            emailContact! = cast(EmailContact,#EmailContactsHashMap!.get(contactKey!))
+            firstName! = emailContact!.getFirstName()
+            lastName! = emailContact!.getLastName()
+            emailAddress! = emailContact!.getEmailAddress()
+            if (address! = "" or emailAddress!.toLowerCase().startsWith(address!) or firstName!.toLowerCase().startsWith(address!))
+                rem Make sure email address has not already been added
+                emailAddressAlreadyAdded=0
+                numEmailAddresses = emailVector!.size()
+                if (numEmailAddresses > 0)
+                    for i = 0 to numEmailAddresses-1
+                         emailChildWindow! = cast(BBjChildWindow,emailVector!.get(i))
+                         if (emailChildWindow!.getText() = emailAddress!)
+                               emailAddressAlreadyAdded = 1
+                         endif   
+                    next i
+                endif
+                emailString$ = ""
+                if !(emailAddressAlreadyAdded)
+                    if (firstName! <> "")
+                        emailString$ = firstName! + " "
+                    endif    
+                    if (lastName! <> "")
+                        emailString$ = emailString$ + lastName! + " " 
+                    endif 
+                    if (emailString$ <> "")
+                        emailString$  = emailString$ + "(" + emailAddress! + ")"
+                    else
+                        emailString$  = emailAddress!
+                    endif    
+                    addressesVector!.add(emailString$)
+                    #EmailAddressesVector!.add(emailContact!)
+                endif    
+            endif
+        wend 
+        numEmailAddresses = addressesVector!.size()
+        addressListBoxY = emailEditBox!.getY() + 25        
+        #EmailAddressesListBox! = #EmailWindow!.addListBox(#EmailWindow!.getAvailableControlID(),60,addressListBoxY,450,(16*numEmailAddresses)+1,"")
+        #EmailAddressesListBox!.setCallback(BBjListBox.ON_LIST_DOUBLE_CLICK,#this!,"OnEmailAddressSelect")
+        #EmailAddressesListBox!.setUserData(emailEditBox!) 
+        #EmailAddressesListBox!.insertItems(0,addressesVector!)
+        #EmailAddressesListBox!.selectIndex(0,err=*next)
+        #EmailAddressesListBox!.setVisible(numEmailAddresses)
+    methodend
+
+    rem /** OnEmailAddressSelect
+    rem * Callback for when a email address is selected from the address list box
+    rem * @param p_event! BBjListDoubleClickEvent object     
+    rem */
+    method public void OnEmailAddressSelect(BBjListDoubleClickEvent p_event!)
+        declare EmailContact emailContact!
+        declare BBjString emailAddress!
+
+        emailEditBox! = cast(BBjEditBox,#EmailAddressesListBox!.getUserData())
+        if (emailEditBox! = null())
+            methodret
+        endif
+              
+        if (p_event! <> null())
+            emailAddressIndex = p_event!.getSelectedIndex()
+        else
+            emailAddressIndex = #EmailAddressesListBox!.getSelectedIndex()
+        endif
+        if (emailAddressIndex <> -1)
+            emailContact! = cast(EmailContact,#EmailAddressesVector!.getItem(emailAddressIndex))
+            firstName$ = emailContact!.getFirstName()  
+            lastName$ = emailContact!.getLastName()  
+            emailAddress$ = emailContact!.getEmailAddress()  
+        else
+            firstName$ = ""
+            lastName$ = ""
+            emailAddress$ =  emailEditBox!.getText()
+            emailAddress! = emailAddress$
+            atIndex = emailAddress!.indexOf("@")
+            dotIndex = emailAddress!.indexOf(".")
+            if !(atIndex <> -1 and atIndex <> emailAddress!.length()-1 and dotIndex <> -1 and dotIndex <> emailAddress!.length()-1)
+                x=MsgBox(#INVALID_EMAIL_MSG$ +  ": " + emailAddress$,16,#Title$)
+                emailEditBox!.focus()
+                methodret
+            endif
+        endif
+        
+        if (emailAddress$ <> "")
+            switch (emailEditBox!.getID())
+                case #EmailToEditBox!.getID()
+                    emailType = #EMAIL_TO_TYPE
+                    break
+                case #EmailCCEditBox!.getID()
+                    emailType = #EMAIL_CC_TYPE
+                    break
+                case #EmailBCCEditBox!.getID()
+                    emailType = #EMAIL_BCC_TYPE
+                    break
+            swend
+            if !(#addEmailAddress(firstName$,lastName$,emailAddress$,emailType))
+                x=MsgBox(#EMAIL_ADDRESS_ALREADY_ADDED_MSG$ +  ": " + emailAddress$,16,#Title$)
+                emailEditBox!.focus()
+            endif    
+         endif      
+    methodend
+
+    rem /** OnEmailAddressLostFocus
+    rem * Callback for when a email address text is changed
+    rem * @param p_event! BBjEditModifyEvent object     
+    rem */
+    method public void OnEmailAddressLostFocus(BBjLostFocusEvent p_event!)
+       declare BBjControl focusedControl!
+
+       focusedControl! = #EmailWindow!.getFocusedControl() 
+       if (focusedControl! <> null() and focusedControl! <> #EmailAddressesListBox!)
+            #EmailAddressesListBox!.setVisible(0)
+       endif
+    methodend
+
+    rem /** addEmailContacts
+    rem * Adds email contacts to the appropriate list 
+    rem * @param p_emailContacts! Vector that contains the email contact object to add     
+    rem * @param p_emailType Email type
+    rem * @return Returns TRUE (1) if all the email contacts were added or FALSE (0) otherwise     
+    rem */
+    method public BBjNumber addEmailContacts(BBjVector p_emailContacts!, BBjNumber p_emailType)
+        declare EmailContact emailContact!
+        
+        rc = 0
+        numEmailContacts = p_emailContacts!.size()
+        if (numEmailContacts > 0)
+            rc = 1
+            for i = 0 to numEmailContacts -1
+                emailContact! = cast(EmailContact,p_emailContacts!.get(i))       
+                addRC = #addEmailContact(emailContact!,p_emailType)
+                if (addRC = 0)
+                    rc = 0
+                endif
+            next i
+        endif
+        methodret rc
+    methodend
+
+    rem /** addEmailContact
+    rem * Adds an email contact to the appropriate list 
+    rem * @param p_emailContact! Email contact object to add     
+    rem * @param p_emailType Email type     
+    rem * @return Returns TRUE (1) if the email contacts was added or FALSE (0) otherwise     
+    rem */
+    method public BBjNumber addEmailContact(EmailContact p_emailContact!, BBjNumber p_emailType)
+        methodret #addEmailAddress(p_emailContact!.getFirstName(),p_emailContact!.getLastNameName(),p_emailContact!.getEmailAddress(),p_emailType)
+    methodend
+    
+    rem /** addEmailAddress
+    rem * Adds an email address to the appropriate list 
+    rem * @param p_emailAddress$ Email address     
+    rem * @param p_emailType Email type     
+    rem * @return Returns TRUE (1) if the email address was added or FALSE (0) otherwise     
+    rem */
+    method public BBjNumber addEmailAddress(BBjString p_emailAddress$, BBjNumber p_emailType)
+        methodret #addEmailAddress("","",p_emailAddress$,p_emailType)
+    methodend
+    
+    rem /** addEmailAddress
+    rem * Adds an email address to the appropriate list 
+    rem * @param p_firstName$ First name     
+    rem * @param p_LastName$ Last name     
+    rem * @param p_emailAddress$ Email address     
+    rem * @param p_emailType Email type     
+    rem * @return Returns TRUE (1) if the email address was added or FALSE (0) otherwise     
+    rem */
+    method public BBjNumber addEmailAddress(BBjString p_firstName$, BBjString p_lastName$, BBjString p_emailAddress$, BBjNumber p_emailType)
+        declare BBjEditBox emailEditBox!
+        declare BBjVector emailVector!
+        declare BBjChildWindow emailChildWindow!
+
+        rc = 0
+        if (p_emailAddress$ <> "")
+            switch (p_emailType)
+                case #EMAIL_TO_TYPE
+                    emailEditBox! = #EmailToEditBox!
+                    emailVector! = #EmailToVector!
+                    break
+                case #EMAIL_CC_TYPE
+                    emailEditBox! = #EmailCCEditBox!
+                    emailVector! = #EmailCCVector!
+                    break
+                case #EMAIL_BCC_TYPE
+                    emailEditBox! = #EmailBCCEditBox!
+                    emailVector! = #EmailBCCVector!
+                    break
+            swend
+            
+            numEmailAddresses =  emailVector!.size()   
+            rem Make sure the email address has not already been added
+            emailAddressAlreadyAdded=0
+            if (numEmailAddresses > 0)
+                for i = 0 to numEmailAddresses-1
+                     emailChildWindow! = cast(BBjChildWindow,emailVector!.get(i))
+                     if (emailChildWindow!.getText() = p_emailAddress$)
+                           emailAddressAlreadyAdded = 1
+                     endif   
+                next i
+            endif
+            if !(emailAddressAlreadyAdded)
+                rem Add the child window invisible
+                emailChildWindow! = #EmailWindow!.addChildWindow(#EmailWindow!.getAvailableControlID(),60,10,150,25,"",$10$,#SysGui!.getAvailableContext())
+                emailChildWindow!.setText(p_emailAddress$)
+                emailVector!.addItem(emailChildWindow!)
+                emailChildWindow!.setUserData(emailEditBox!)
+                emailChildWindow!.setOpaque(1)
+                emailAddressStaticText! = emailChildWindow!.addStaticText(emailChildWindow!.getAvailableControlID(),5,5,120,25,"")
+                emailAddressStaticText!.setLineWrap(0)
+                if (p_firstName$ <> "")
+                    staticText$ = p_firstName$ + " " + p_lastName$
+                    shortCue$ = p_firstName$ + " " + p_lastName$ + " (" + p_emailAddress$ + ")"
+                else
+                    staticText$ = p_emailAddress$
+                    shortCue$ = p_emailAddress$
+                endif
+                emailAddressStaticText!.setText(staticText$)
+                emailAddressStaticText!.setShortCue(shortCue$)
+                emailChildWindow!.setShortCue(shortCue$)
+                emailAddressRemoveButton! = emailChildWindow!.addToolButton(emailChildWindow!.getAvailableControlID(),127,2,21,21,"") 
+                emailAddressRemoveButton!.setNoEdge(1)
+                emailAddressRemoveButton!.setOpaque(0)
+                emailAddressRemoveButton!.setShortCue(shortCue$)
+                emailAddressRemoveButton!.setUserData(emailChildWindow!)
+                emailAddressRemoveButton!.setImage(#RemoveImage!)
+                emailAddressRemoveButton!.setCallback(BBjToolButton.ON_TOOL_BUTTON_PUSH,#this!,"OnEmailAddressRemove")
+    
+                emailEditBox!.setText("")
+                #EmailAddressesListBox!.setVisible(0)
+                #layoutEmailDialogControls()
+                #setEmailSendButtonState()  
+                if (!#SkipAddressFocus)   
+                    emailEditBox!.focus()
+                endif
+                rc = 1
+            endif
+        endif
+        methodret rc     
+    methodend
+
+    rem /** layoutEmailDialogControls
+    rem * Lays out the controls on the email dialog
+    rem */
+    method protected void layoutEmailDialogControls()
+        #EmailDialogRow=0
+        addressesY = #layoutAddressControls(#EMAIL_TO_TYPE)
+        ccY = #layoutAddressControls(#EMAIL_CC_TYPE)
+        if (ccY > 0)
+            addressesY = ccY
+        endif    
+        bccY = #layoutAddressControls(#EMAIL_BCC_TYPE)
+        if (bccY > 0)
+            addressesY = bccY
+        endif    
+        #layoutControl(#EmailSubjectStaticText!,5,8 + addressesY)
+        subjectY = #layoutControl(#EmailSubjectEditBox!,60,5 + addressesY)
+        #layoutControl(#EmailMessageStaticText!,5,8 + subjectY)
+        messageY = #layoutControl(#EmailMessageCEdit!,60,5 + subjectY)
+        attachmentsY = #layoutAttachmentControls(#EmailAttachmentMenuButton!,5,5 + messageY)
+        #layoutControl(#EmailSettingsButton!,5,20 + attachmentsY)
+        #layoutControl(#EmailCancelButton!,310,20 + attachmentsY)
+        buttonsY = #layoutControl(#EmailSendButton!,416,20 + attachmentsY)
+        #EmailWindow!.setSize(520,buttonsY+10)
+    methodend
+
+    rem /** layoutControl
+    rem * Lays out the passed control on the email dialog
+    rem */
+    method protected BBjNumber layoutControl(BBjControl p_control!,BBjNumber p_x, BBjNumber p_y)
+        p_control!.setLocation(p_x,p_y)
+        endY = p_y + p_control!.getHeight()
+        methodret endY
+    methodend
+
+    rem /** layoutAttachmentControls
+    rem * Lays out thea attachment controls on the email dialog
+    rem */
+    method protected BBjNumber layoutAttachmentControls(BBjControl p_control!,BBjNumber p_x, BBjNumber p_y)
+        declare Set attachmentsSet!
+        declare Iterator attachmentsIter!
+        
+        locationY = #layoutControl(p_control!,p_x,p_y)
+        numAttachments = #EmailAttachmentsHashMap!.size()
+        if (numAttachments > 0)
+            controlY = p_y
+            attachmentsSet! = #EmailAttachmentsHashMap!.keySet()
+            attachmentsIter! = attachmentsSet!.iterator()
+            while attachmentsIter!.hasNext()
+                attachment$ = str(attachmentsIter!.next())
+                attachmentChildWindow! = cast(BBjChildWindow,#EmailAttachmentsHashMap!.get(attachment$))
+                controlX = 60 
+                attachmentChildWindow!.setLocation(controlX ,controlY)
+                attachmentChildWindow!.setVisible(1)
+                controlHeight = 25
+                controlY = controlY + controlHeight + 5
+            wend
+            locationY = controlY
+        endif
+        methodret locationY
+    methodend
+    
+    rem /** layoutEmailAddresControls
+    rem * Lays out thea address controls on the email dialog
+    rem */
+    method protected BBjNumber layoutAddressControls(BBjNumber p_emailType)
+        declare BBjVector emailVector!
+        declare BBjEditBox emailEditBox!
+        declare BBjMenuButton emailMenuButton!
+        declare BBjChildWindow addressChildWindow!
+        
+        switch (p_emailType)
+            case #EMAIL_TO_TYPE
+                emailVector! = #EmailToVector!
+                emailEditBox! = #EmailToEditBox!
+                emailMenuButton! = #EmailToMenuButton!
+                emailTypeEnabled = 1
+                break
+            case #EMAIL_CC_TYPE
+                emailVector! = #EmailCCVector!
+                emailEditBox! = #EmailCCEditBox!
+                emailMenuButton! = #EmailCCMenuButton!
+                emailTypeEnabled = #EmailCCEnabled
+                break
+            case #EMAIL_BCC_TYPE
+                emailVector! = #EmailBCCVector!
+                emailEditBox! = #EmailBCCEditBox!
+                emailMenuButton! = #EmailBCCMenuButton!
+                emailTypeEnabled = #EmailBCCEnabled
+                break
+        swend
+        startRow = #EmailDialogRow
+        rem Set the location and visibility of the email menu button
+        emailMenuButton!.setLocation(5,10+(30*#EmailDialogRow))
+        emailMenuButton!.setVisible(emailTypeEnabled)
+        emailEditBox!.setVisible(emailTypeEnabled)
+
+        rem Set the location of the address child windows and edit box
+        numAddresses =  emailVector!.size()
+        for i = 0 to numAddresses 
+            #EmailDialogRow = startRow + int(i/3)
+            col = mod(i,3)
+            controlX = 60 + (150 * col)
+            controlY = 10 + (30 * #EmailDialogRow)
+            if (i = numAddresses)
+                emailEditBox!.setLocation(controlX,controlY)
+                editBoxWidth = 450 - (150 * col)
+                editBoxHeight = 25
+                emailEditBox!.setSize(editBoxWidth,editBoxHeight)
+            else
+                addressChildWindow! = cast(BBjChildWindow, emailVector!.get(i))
+                addressChildWindow!.setLocation(controlX ,controlY)
+                addressChildWindow!.setVisible(1)
+            endif    
+        next i
+        
+        if (emailTypeEnabled)
+            #EmailDialogRow = #EmailDialogRow + 1
+            locationY = controlY + editBoxHeight
+        endif
+        
+        methodret locationY
+    methodend     
+
+    rem /** removeEmailContacts
+    rem * Removes email contacts from the appropriate list 
+    rem * @param p_emailContacts Vector that contains the EmailContact objects to remove     
+    rem * @param p_emailType Email type     
+    rem * @return Returns TRUE (1) if all the email contacts were removed or FALSE (0) otherwise     
+    rem */
+    method public BBjNumber removeEmailContacts(BBjVector p_emailContacts!, BBjNumber p_emailType)
+        declare EmailContact emailContact!
+
+        rc = 0
+        numEmailContacts = p_emailContacts!.size()
+        if (numContacts > 0)
+            rc = 1
+            for i = 0 to numContacts -1
+                emailContact! = cast(EmailContact,p_emailContacts!.get(i))       
+                removeRC = #removeEmailContact(emailContact!,p_emailType)
+                if (removeRC = 0)
+                    rc = 0
+                endif      
+            next i
+        endif
+        
+        methodret rc
+    methodend
+    
+    rem /** removeEmailContact
+    rem * Removes a email contact from the appropriate list 
+    rem * @param p_emailContact Email object to remove     
+    rem * @param p_emailType Email type     
+    rem * @return Returns TRUE (1) if the email contact was removed or FALSE (0) otherwise     
+    rem */
+    method public BBjNumber removeEmailContact(EmailContact p_emailContact!, BBjNumber p_emailType)
+        methodret #removeEmailAddress(p_emailContact!.getEmailAddress(),p_emailType)
+    methodend
+    
+    rem /** removeEmailAddresses
+    rem * Removes email addresses from the appropriate list 
+    rem * @param p_emailAddresses Vector that contains the email addresses to remove     
+    rem * @param p_emailType Email type     
+    rem * @return Returns TRUE (1) if all the email addresses were removed or FALSE (0) otherwise     
+    rem */
+    method public BBjNumber removeEmailAddresses(BBjVector p_emailAddresses!, BBjNumber p_emailType)
+        rc = 0
+        numEmailAddresses = p_emailAddresses!.size()
+        if (numEmailAddresses > 0)
+            rc = 1
+            for i = 0 to numEmailAddresses -1
+                emailAddress$ = str(p_emailAddresses!.get(i))       
+                removeRC = #removeEmailAddress(emailAddress$,p_emailType)
+                if (removeRC = 0)
+                    rc = 0
+                endif
+            next i
+        endif
+        methodret rc
+    methodend
+    
+    rem /** removeEmailAddress
+    rem * Removes a email address from the appropriate list 
+    rem * @param p_emailAddress$ Email address to remove     
+    rem * @param p_emailType Email type     
+    rem * @return Returns TRUE (1) if the email address was removed or FALSE (0) otherwise     
+    rem */
+    method public BBjNumber removeEmailAddress(BBjString p_emailAddress$, BBjNumber p_emailType)
+        declare BBjVector emailVector!
+        declare BBjChildWindow childWindow! 
+        declare BBjChildWindow emailChildWindow! 
+        declare BBjEditBox emailEditBox!
+        
+        rc = 0 
+        switch (p_emailType)
+            case #EMAIL_TO_TYPE
+                emailVector! = #EmailToVector!
+                emailEditBox! = #EmailToEditBox!
+                break
+            case #EMAIL_CC_TYPE
+                emailVector! = #EmailCCVector!
+                emailEditBox! = #EmailCCEditBox!
+                break
+            case #EMAIL_BCC_TYPE
+                emailVector! = #EmailBCCVector!
+                emailEditBox! = #EmailBCCEditBox!
+                break
+        swend
+        if (emailVector!.size() > 0)
+            for i = 0 to emailVector!.size() - 1
+                childWindow! = cast(BBjChildWindow,emailVector!.getItem(i))
+                emailAddress$ = childWindow!.getText()
+                if (emailAddress$ = p_emailAddress$)
+                    foundIndex = i
+                    emailChildWindow! = childWindow!
+                endif
+            next i
+            emailVector!.removeItem(foundIndex)
+            prevX = emailChildWindow!.getX()
+            prevY = emailChildWindow!.getY()
+            emailChildWindow!.destroy()
+            rem Move all following child windows back one position
+            if (foundIndex < emailVector!.size())   
+                for i = foundIndex to emailVector!.size() - 1
+                    childWindow! = cast(BBjChildWindow,emailVector!.getItem(i))
+                    currX = childWindow!.getX()
+                    currY = childWindow!.getY()
+                    childWindow!.setLocation(prevX,prevY)
+                    prevX = currX
+                    prevY = currY
+                next i
+            endif
+            
+            rem Move and resize the edit box
+            emailEditBox!.setLocation(prevX,prevY)
+            switch (prevX)
+                case 60
+                    editBoxWidth = 450
+                    break
+                case 210
+                    editBoxWidth = 300
+                    break
+                case 360
+                    editBoxWidth = 150
+                    break
+            swend 
+            emailEditBox!.setSize(editBoxWidth,25)
+            emailEditBox!.setText("")
+            #layoutEmailDialogControls()
+            #setEmailSendButtonState()            
+            emailEditBox!.focus()
+            rc = 1
+        endif
+        
+        methodret rc
+    methodend
+
+    
+    rem /** OnEmailAddressRemove
+    rem * Callback for when the email dialog remove email address button is pushed
+    rem * @param p_event! BBjToolButtonPushEvent object     
+    rem */
+    method public void OnEmailAddressRemove(BBjToolButtonPushEvent p_event!)
+        declare BBjToolButton removeAddressToolButton!
+        declare BBjChildWindow emailChildWindow!
+        declare BBjEditBox emailEditBox!
+        
+        removeAddressToolButton! = cast(BBjToolButton,p_event!.getControl())
+        emailChildWindow! = cast(BBjChildWindow,removeAddressToolButton!.getUserData())
+        emailEditBox! = cast(BBjEditBox,emailChildWindow!.getUserData())
+
+        emailAddress$ = emailChildWindow!.getText()
+        switch (emailEditBox!.getID())
+            case #EmailToEditBox!.getID()
+                emailType = #EMAIL_TO_TYPE
+                break
+            case #EmailCCEditBox!.getID()
+                emailType = #EMAIL_CC_TYPE
+                break
+            case #EmailBCCEditBox!.getID()
+                emailType = #EMAIL_CC_TYPE
+                break
+        swend
+        #removeEmailAddress(emailAddress$,emailType)
+    methodend
+    
+    rem /** OnEmailDialogCCAdd
+    rem * Callback for when the email dialog CC add menu item is selected
+    rem * @param p_event! BBjPopupSelectEvent object     
+    rem */
+    method public void OnEmailDialogCCAdd(BBjPopupSelectEvent p_event!)
+        #EmailCCEnabled = 1
+        #EmailCCAddMenuItem!.setEnabled(0)       
+        #layoutEmailDialogControls()
+        #EmailCCEditBox!.focus()
+    methodend
+
+    rem /** OnEmailDialogCCRemove
+    rem * Callback for when the email dialog CC remove menu item is selected
+    rem * @param p_event! BBjPopupSelectEvent object     
+    rem */
+    method public void OnEmailDialogCCRemove(BBjPopupSelectEvent p_event!)
+        declare BBjChildWindow emailChildWindow!
+        
+        #EmailCCEnabled = 0
+        #EmailCCAddMenuItem!.setEnabled(1)       
+        rem Destroy all CC child windows
+        numCCChildWindows = #EmailCCVector!.size()
+        if (numCCChildWindows > 0)
+            for i = 0 to numCCChildWindows -1
+                emailChildWindow! = cast(BBjChildWindow,#EmailCCVector!.get(i))
+                emailChildWindow!.destroy()
+            next i
+        endif
+        
+        rem Move all BCC child windows Up
+        numCCAddressRows = int((numCCChildWindows)/3) + 1
+        numBCCChildWindows = #EmailBCCVector!.size()
+        if (numBCCChildWindows > 0)
+            for i = 0 to numBCCChildWindows -1
+                emailChildWindow! = cast(BBjChildWindow,#EmailBCCVector!.get(i))
+                emailChildWindowY = emailChildWindow!.getY() -  (30 * numCCAddressRows)
+                emailChildWindow!.setLocation(emailChildWindow!.getX(),emailChildWindowY)
+            next i
+        endif
+        
+        #EmailCCVector!.clear()
+        #EmailCCEditBox!.setLocation(60,#EmailCCEditBox!.getY())
+        #EmailCCEditBox!.setSize(450,25)
+        #layoutEmailDialogControls()
+    methodend
+
+    rem /** OnEmailDialogBCCAdd
+    rem * Callback for when the email dialog BCC add menu item is selected
+    rem * @param p_event! BBjPopupSelectEvent object     
+    rem */
+    method public void OnEmailDialogBCCAdd(BBjPopupSelectEvent p_event!)
+        #EmailBCCEnabled = 1
+         #EmailBCCAddMenuItem!.setEnabled(0)       
+        #layoutEmailDialogControls()
+        #EmailBCCEditBox!.focus()
+    methodend
+
+    rem /** OnEmailDialogBCCRemove
+    rem * Callback for when the email dialog BCC remove menu item is selected
+    rem * @param p_event! BBjPopupSelectEvent object     
+    rem */
+    method public void OnEmailDialogBCCRemove(BBjPopupSelectEvent p_event!)
+        declare BBjChildWindow emailChildWindow!
+        
+        #EmailBCCEnabled = 0
+        #EmailBCCAddMenuItem!.setEnabled(1)       
+        rem Destroy all BCC child windows
+        numBCCChildWindows = #EmailBCCVector!.size()
+        if (numBCCChildWindows > 0)
+            for i = 0 to numBCCChildWindows -1
+                emailChildWindow! = cast(BBjChildWindow,#EmailBCCVector!.get(i))
+                emailChildWindow!.destroy()
+            next i
+        endif
+        #EmailBCCVector!.clear()
+        #EmailBCCEditBox!.setLocation(60,#EmailBCCEditBox!.getY())
+        #EmailBCCEditBox!.setSize(450,25)
+        #layoutEmailDialogControls()
+    methodend
+
+    rem /** layoutEmailDialogControls2
+    rem * Lays out the controls on the email dialog
+    rem */
+    method protected void layoutEmailDialogControls2()
+        numEmailToAddresses =  #EmailToVector!.size()   
+        numAdditionalToAddressRows = int((numEmailToAddresses)/3)
+        endToAddresses = numAdditionalToAddressRows * 30 
+        heightAdjustment = endToAddresses
+
+        numEmailCCAddresses =  #EmailCCVector!.size()   
+        numAdditionalCCAddressRows = int((numEmailCCAddresses)/3)
+        endCCAddresses = numAdditionalCCAddressRows * 30 
+        heightAdjustment = heightAdjustment + endCCAddresses
+
+        numEmailBCCAddresses =  #EmailBCCVector!.size()   
+        numAdditionalBCCAddressRows = int((numEmailBCCAddresses)/3)
+        endBCCAddresses = numAdditionalBCCAddressRows * 30 
+        heightAdjustment = heightAdjustment + endBCCAddresses
+
+        #EmailToEditBox!.setLocation(#EmailToEditBox!.getX(),endToAddresses + 10)  
+
+        emailCCEditBoxX = #EmailCCEditBox!.getX()
+        emailBCCEditBoxX = #EmailBCCEditBox!.getX()
+        if (#EmailCCEnabled and #EmailBCCEnabled)
+            heightAdjustment = heightAdjustment + 60
+            #EmailCCMenuButton!.setLocation(5,endToAddresses + 40)
+            #EmailCCEditBox!.setLocation(emailCCEditBoxX,endToAddresses + endCCAddresses + 40)  
+            #EmailBCCMenuButton!.setLocation(5,endToAddresses + endCCAddresses + 70)
+            #EmailBCCEditBox!.setLocation(emailBCCEditBoxX,endToAddresses + endCCAddresses + endBCCAddresses + 70)  
+        else
+            if (#EmailBCCEnabled)
+                heightAdjustment = heightAdjustment + 30
+                #EmailBCCMenuButton!.setLocation(5,endToAddresses + 40)
+                #EmailBCCEditBox!.setLocation(emailBCCEditBoxX,endToAddresses + endBCCAddresses + 40)  
+            else
+                if (#EmailCCEnabled)
+                    heightAdjustment = heightAdjustment + 30
+                    #EmailCCMenuButton!.setLocation(5,endToAddresses + 40)
+                    #EmailCCEditBox!.setLocation(emailCCEditBoxX,endToAddresses + endCCAddresses + 40) 
+                endif      
+            endif
+        endif
+        numAttachments =  #EmailAttachmentsHashMap!.size()
+        if (numAttachments > 1)
+            heightAdjustment = numAttachments * 30
+        endif    
+            
+        #EmailWindow!.setSize(520,230+heightAdjustment)
+        #EmailCCMenuButton!.setVisible(#EmailCCEnabled)
+        #EmailCCEditBox!.setVisible(#EmailCCEnabled)
+        #EmailBCCMenuButton!.setVisible(#EmailBCCEnabled)
+        #EmailBCCEditBox!.setVisible(#EmailBCCEnabled)
+        #EmailSubjectStaticText!.setLocation(5,43+heightAdjustment)
+        #EmailSubjectEditBox!.setLocation(60,40+heightAdjustment)      
+        #EmailMessageStaticText!.setLocation(5,70+heightAdjustment)
+        #EmailMessageCEdit!.setLocation(60,70+heightAdjustment)      
+        #EmailAttachmentMenuButton!.setLocation(5,150+heightAdjustment)
+        #EmailSettingsButton!.setLocation(5,200+heightAdjustment)
+        #EmailCancelButton!.setLocation(310,200+heightAdjustment)
+        #EmailSendButton!.setLocation(415,200+heightAdjustment)
+    methodend
+
+    rem /** setEmailSendButtonState
+    rem * Sets the email send button to enabled or disabled
+    rem */
+    method protected void setEmailSendButtonState()
+        if (#EmailToVector!.size() > 0 and #EmailServerHost$ <> "" and #EmailServerPort > 0 and #EmailServerUserName$ <> "" and #EmailServerPassword$ <> "")
+            #EmailSendButton!.setEnabled(1)
+        else
+            #EmailSendButton!.setEnabled(0)
+        endif
+    methodend
+    
+    rem /** OnEmailDialogSettings
+    rem * Callback for when the email dialog Settings button is pressed
+    rem * @param p_event! BBjButtonPushEvent object     
+    rem */
+    method public void OnEmailDialogSettings(BBjButtonPushEvent p_event!)
+        if (#EmailSettingsDialog! = null())
+            #EmailSettingsDialog! =  #SysGui!.addWindow(#SysGui!.getAvailableContext(), #EmailWindow!.getX() + 20,#EmailWindow!.getY() + 40,340,240,"Email Settings",$00090012$)
+            #EmailSettingsSaveButton! = #EmailSettingsDialog!.addButton(1,235,210,100,25,#SAVE$)
+            #EmailSettingsCancelButton! = #EmailSettingsDialog!.addButton(2,130,210,100,25,#CANCEL$)
+            #EmailSettingsDialog!.addStaticText(#EmailSettingsDialog!.getAvailableControlID(),5,15,75,25,#FROM_EMAIL$ + ":",$8000$)
+            #EmailSettingsFromEditBox! = #EmailSettingsDialog!.addEditBox(#EmailSettingsDialog!.getAvailableControlID(),85,10,245,25,"")
+            #EmailSettingsDialog!.addStaticText(#EmailSettingsDialog!.getAvailableControlID(),5,45,75,25,#SERVER$ + ":",$8000$)
+            #EmailSettingsServerEditBox! = #EmailSettingsDialog!.addEditBox(#EmailSettingsDialog!.getAvailableControlID(),85,40,245,25,"")
+            #EmailSettingsDialog!.addStaticText(#EmailSettingsDialog!.getAvailableControlID(),5,75,75,25,#PORT$ + ":",$8000$)
+            #EmailSettingsPortEditBox! = #EmailSettingsDialog!.addEditBox(#EmailSettingsDialog!.getAvailableControlID(),85,70,60,25,"")
+            #EmailSettingsDialog!.addStaticText(#EmailSettingsDialog!.getAvailableControlID(),150,75,75,25,#SSL$ + ":",$8000$)
+            #EmailSettingsSSLCheckBox! = #EmailSettingsDialog!.addCheckBox(#EmailSettingsDialog!.getAvailableControlID(),230,70,245,25,"")
+            #EmailSettingsDialog!.addStaticText(#EmailSettingsDialog!.getAvailableControlID(),5,105,75,25,#USER_NAME$ + ":",$8000$)
+            #EmailSettingsUserNameEditBox! = #EmailSettingsDialog!.addEditBox(#EmailSettingsDialog!.getAvailableControlID(),85,100,245,25,"")
+            #EmailSettingsDialog!.addStaticText(#EmailSettingsDialog!.getAvailableControlID(),5,135,75,25,#PASSWORD$ + ":",$8000$)
+            #EmailSettingsPasswordEditBox! = #EmailSettingsDialog!.addEditBox(#EmailSettingsDialog!.getAvailableControlID(),85,130,245,25,"",$0400$)
+            #EmailSettingsCreateContactsOnSendCheckBox! = #EmailSettingsDialog!.addCheckBox(#EmailSettingsDialog!.getAvailableControlID(),5,160,25,25,"")
+            #EmailSettingsDialog!.addStaticText(#EmailSettingsDialog!.getAvailableControlID(),30,165,330,40,#CREATE_CONTACTS_ON_SEND$)
+            #EmailSettingsDialog!.setCallback(BBjTopLevelWindow.ON_CLOSE,#this!,"OnEmailSettingsDialogClose")
+            #EmailSettingsCancelButton!.setCallback(BBjButton.ON_BUTTON_PUSH,#this!,"OnEmailSettingsDialogClose")
+            #EmailSettingsSaveButton!.setCallback(BBjButton.ON_BUTTON_PUSH,#this!,"OnEmailSettingsDialogSave")
+        endif
+        #EmailSettingsFromEditBox!.setText(#EmailFrom$)
+        #EmailSettingsServerEditBox!.setText(#EmailServerHost$)
+        #EmailSettingsPortEditBox!.setText(str(#EmailServerPort))
+        #EmailSettingsSSLCheckBox!.setSelected(#EmailServerSSL)
+        #EmailSettingsUserNameEditBox!.setText(#EmailServerUserName$)
+        #EmailSettingsPasswordEditBox!.setText(#EmailServerPassword$)
+        #EmailSettingsCreateContactsOnSendCheckBox!.setSelected(#CreateContactsOnSend)
+        #EmailSettingsDialog!.setVisible(1)    
+    methodend
+
+    rem /** 
+    rem * Callback for when the email settings dialog save button is pressed
+    rem * @param p_event! BBjButtonPushEvent object     
+    rem */
+    method public void OnEmailSettingsDialogSave(BBjButtonPushEvent p_event!)
+        #setEmailFrom(#EmailSettingsFromEditBox!.getText())
+        #setEmailServerHost(#EmailSettingsServerEditBox!.getText())
+        #setEmailServerPort(num(#EmailSettingsPortEditBox!.getText()))
+        #setEmailServerSSL(#EmailSettingsSSLCheckBox!.isSelected())
+        #setEmailServerUserName(#EmailSettingsUserNameEditBox!.getText())
+        #setEmailServerPassword(#EmailSettingsPasswordEditBox!.getText())
+        #setCreateContactsOnSend(#EmailSettingsCreateContactsOnSendCheckBox!.isSelected())
+        #setEmailSendButtonState()
+        #EmailSettingsDialog!.setVisible(0)
+    methodend
+    
+    rem /** OnEmailSettingsDialogClose
+    rem * Callback for when the email settings dialog is to be closed
+    rem * @param p_event! BBjSysGuiEvent object     
+    rem */
+    method public void OnEmailSettingsDialogClose(BBjSysGuiEvent p_event!)
+        #EmailSettingsDialog!.setVisible(0)
+    methodend
+  
+classend
+
+
+rem /** EmailContact
+rem * Used to keep track of email contact information including first and last names and email addresses
+rem * @since 14.0 
+rem */
+class public EmailContact
+    rem /** Contact first name */
+    field public BBjString FirstName$
+    rem /** Contact last name */
+    field public BBjString LastName$
+    rem /** Contact email address */
+    field public BBjString EmailAddress$
+    
+    rem /** Default Constructor
+    rem * Creates a empty EmailContact object     
+    rem */
+    method public EmailContact()
+    methodend
+
+    rem /** Constructor
+    rem * Creates a EmailContact object given a email address     
+    rem * @param p_emailAddress$ Contact email address     
+    rem */
+    method public EmailContact(BBjString p_emailAddress$)
+        #EmailAddress$ = p_emailAddress$
+    methodend
+    
+    rem /** Constructor
+    rem * Creates a EmailContact object given a first name, last name, and email address     
+    rem * @param p_firstName$ Contact first name     
+    rem * @param p_lastName$ Contact last name     
+    rem * @param p_emailAddress$ Contact email address     
+    rem */
+    method public EmailContact(BBjString p_firstName$, BBjString p_lastName$, BBjString p_emailAddress$)
+        #FirstName$ = p_firstName$
+        #LastName$ = p_lastName$
+        #EmailAddress$ = p_emailAddress$
+    methodend
+classend
