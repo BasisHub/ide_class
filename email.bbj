@@ -4,10 +4,10 @@ rem * @since 10.0
 rem */
 rem package Email
 
-declare EmailDialog emailDialog!
-emailDialog! = new EmailDialog()
-emailDialog!.doModal()
-release
+REM declare EmailDialog emailDialog!
+REM emailDialog! = new EmailDialog()
+REM emailDialog!.doModal()
+REM release
 
 
 rem ----------------------------------------------------------------------
@@ -94,6 +94,7 @@ rem * is populated and sent up to the caller.  Attachments are supported.
 rem * @since 10.0 
 rem * @see <a href="EmailExample.bbj">Example</a>
 rem */
+REM I put an extra comment here
 class public Email
     rem /** Session object */
     field public Session session!
@@ -252,6 +253,7 @@ class public Email
     rem * relevant to them, but is not a direct correspondence with them.
     rem * @param cc$ Cc email address 
     rem */
+    REM I put another comment here
     method public void setCc(BBjString cc$)
         #CcEmailAddresses!.clear()
         #CcEmailAddresses!.add(cc$)
